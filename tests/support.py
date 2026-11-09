@@ -30,6 +30,7 @@ _ADMIN_RIGHTS = dict.fromkeys(
         "can_post_stories",
         "can_edit_stories",
         "can_delete_stories",
+        "can_send_welcome_messages",
     ),
     False,
 )
@@ -86,10 +87,10 @@ class RecordingSession(BaseSession):
         if type(method) in self.failing_methods:
             raise TelegramBadRequest(method=method, message="forced failure")
         if isinstance(method, GetChatMember):
-            return self._chat_member(method)
+            return self._build_chat_member(method)
         return True
 
-    def _chat_member(self, method: GetChatMember) -> ChatMemberMember | ChatMemberLeft:
+    def _build_chat_member(self, method: GetChatMember) -> ChatMemberMember | ChatMemberLeft:
         if method.user_id not in self.chat_members:
             raise TelegramBadRequest(method=method, message="user not found")
         status, username = self.chat_members[method.user_id]
@@ -133,7 +134,7 @@ def join_request(user: dict, chat: dict | None = None) -> dict:
     }
 
 
-def _member_state(status: str, user: dict) -> dict:
+def _build_member_state(status: str, user: dict) -> dict:
     state: dict[str, Any] = {"status": status, "user": user}
     if status == "kicked":
         state["until_date"] = 0
@@ -144,24 +145,24 @@ def _member_state(status: str, user: dict) -> dict:
     return state
 
 
-def _status_change(kind: str, old: str, new: str, user: dict, chat: dict | None) -> dict:
+def _build_status_change(kind: str, old: str, new: str, user: dict, chat: dict | None) -> dict:
     return {
         kind: {
             "chat": chat or supergroup(),
             "from": make_user(ADMIN_ID),
             "date": 1,
-            "old_chat_member": _member_state(old, user),
-            "new_chat_member": _member_state(new, user),
+            "old_chat_member": _build_member_state(old, user),
+            "new_chat_member": _build_member_state(new, user),
         }
     }
 
 
 def member_change(old: str, new: str, user: dict, chat: dict | None = None) -> dict:
-    return _status_change("chat_member", old, new, user, chat)
+    return _build_status_change("chat_member", old, new, user, chat)
 
 
 def bot_change(old: str, new: str, chat: dict | None = None) -> dict:
-    return _status_change("my_chat_member", old, new, BOT_USER, chat)
+    return _build_status_change("my_chat_member", old, new, BOT_USER, chat)
 
 
 def command(
