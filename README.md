@@ -36,8 +36,8 @@ venv/bin/python -m hq_access_bot
 
 On Windows, create `.env` and run `run.bat`.
 
-Only one copy of the bot can run per token, otherwise Telegram returns error 409. The guard
-against a second launch works on Linux only.
+Only one copy of the bot can run per token, otherwise Telegram returns error 409. A second
+launch from the same folder is refused at startup.
 
 ### Running on a server
 
@@ -134,7 +134,7 @@ The `data/` directory is created at startup and is not stored in git.
 |------------------|----------------------------------------------------------------|
 | `whitelist.json` | The access list.                                               |
 | `access.log`     | Audit of requests and list changes. Rotated at 1 MB, 3 archives. |
-| `hqbot.lock`     | Lock against a second launch, Linux only.                      |
+| `hqbot.lock`     | Lock against a second launch.                                  |
 
 Telegram keeps updates received while the bot is off for 24 hours, and the bot processes them
 at startup. Older requests have to be filed again.
@@ -160,6 +160,7 @@ If the token leaks, revoke it with `/revoke` at @BotFather and update `.env`.
 hq_access_bot/
 ├── app.py            application assembly and polling startup
 ├── config.py         settings and data paths
+├── errors.py         base type for fatal failures
 ├── texts.py          all bot messages
 ├── audit_log.py      access audit
 ├── notifier.py       direct message delivery

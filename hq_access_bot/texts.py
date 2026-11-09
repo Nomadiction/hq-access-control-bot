@@ -2,7 +2,8 @@
 
 from html import escape
 
-from hq_access_bot.whitelist.models import AddOutcome, Member, Person, Whitelist
+from hq_access_bot.whitelist.identity import Person
+from hq_access_bot.whitelist.models import Member, MemberChange, Whitelist
 
 UNKNOWN_PROJECT = "проект"
 
@@ -57,6 +58,11 @@ EMPTY_WHITELIST = "Список доступа пуст."
 
 _SECONDS_PER_HOUR = 3600
 _SECONDS_PER_MINUTE = 60
+
+# Telegram's maximum message length, which it counts in UTF-16 code units.
+_MESSAGE_LIMIT_UTF16_UNITS = 4096
+
+_UTF16_UNIT_BYTES = 2
 
 
 def format_user_welcome(support_username: str) -> str:
@@ -162,18 +168,18 @@ def format_group_not_found(target: str) -> str:
     return f"Не нашёл группу: <b>{_escape(target)}</b>"
 
 
-def format_add_report(project: str, outcome: AddOutcome) -> str:
+def format_add_report(project: str, change: MemberChange) -> str:
     lines = [f"<b>{_escape(project)}</b>"]
-    if outcome.added:
-        lines.append("✅ Добавлено: " + _escape(", ".join(outcome.added)))
-    if outcome.skipped:
-        lines.append("⏭ Уже были: " + _escape(", ".join(outcome.skipped)))
+    if change.applied:
+        lines.append("✅ Добавлено: " + _escape(", ".join(change.applied)))
+    if change.skipped:
+        lines.append("⏭ Уже были: " + _escape(", ".join(change.skipped)))
     return "\n".join(lines)
 
 
-def format_removal_report(project: str, removed: list[str]) -> str:
-    if removed:
-        return f"<b>{_escape(project)}</b>\n🗑 Удалено: " + _escape(", ".join(removed))
+def format_removal_report(project: str, change: MemberChange) -> str:
+    if change.applied:
+        return f"<b>{_escape(project)}</b>\n🗑 Удалено: " + _escape(", ".join(change.applied))
     return f"<b>{_escape(project)}</b>\nНикого не нашёл для удаления."
 
 
@@ -181,12 +187,32 @@ def format_group_deleted_reply(project: str) -> str:
     return f"🗑 Группа <b>{_escape(project)}</b> убрана из списка доступа."
 
 
-def format_access_lists(whitelist: Whitelist) -> str:
-    blocks = []
+def format_access_list_messages(whitelist: Whitelist) -> list[str]:
+    """Render the access lists as one or more messages that fit Telegram's size limit."""
+    lines = ["📋 <b>Списки доступа</b>"]
     for group in whitelist.groups.values():
         member_lines = [_format_member_line(m) for m in group.members] or ["<i>пусто</i>"]
-        blocks.append("\n".join([f"<b>{_escape(group.project)}</b>", *member_lines]))
-    return "📋 <b>Списки доступа</b>\n\n" + "\n\n".join(blocks)
+        lines += ["", f"<b>{_escape(group.project)}</b>", *member_lines]
+    return _split_into_messages(lines)
+
+
+def _split_into_messages(lines: list[str]) -> list[str]:
+    """Group whole lines into messages, so a split never falls inside an HTML tag."""
+    messages: list[str] = []
+    current = ""
+    for line in lines:
+        candidate = f"{current}\n{line}" if current else line
+        if _count_utf16_units(candidate) > _MESSAGE_LIMIT_UTF16_UNITS:
+            messages.append(current.rstrip("\n"))
+            current = line
+        else:
+            current = candidate
+    messages.append(current)
+    return messages
+
+
+def _count_utf16_units(text: str) -> int:
+    return len(text.encode("utf-16-le")) // _UTF16_UNIT_BYTES
 
 
 def _format_request_notice(heading: str, project: str, person: Person) -> str:

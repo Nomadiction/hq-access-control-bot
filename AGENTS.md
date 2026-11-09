@@ -28,13 +28,13 @@ pytest -q
   after the block exits, because the lock is held inside it.
 - Messages shown to Telegram users live in `hq_access_bot/texts.py` and `bot_profile.py` and are in
   Russian. Everything else is in English.
-- The JSON keys of `whitelist.json` (`id`, `username`, `in`, `name`) are the on-disk format of live
-  data. Changing them needs a migration.
+- The JSON keys of `whitelist.json` (`project`, `members`, `id`, `username`, `in`, `name`) are the
+  on-disk format of live data. Changing them needs a migration.
 
 ## Commits
 
 `<type>(<scope>): <lowercase sentence>`, for example
 `fix(api): a line goes back into stock once and only when picked`.
 
-One line only: no body and no trailers, including AI attribution. One logical change per commit, on
-a `feature/HQ-<issue>/<description>` branch.
+One line only: no body and no trailers, including AI attribution. One logical change per commit,
+straight to `main`.

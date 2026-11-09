@@ -12,7 +12,7 @@ def alpha(harness):
 
 
 @pytest.mark.parametrize("status", ["left", "kicked"])
-async def test_departed_member_loses_permit(alpha, status):
+async def test_departed_member_loses_entry(alpha, status):
     await alpha.feed(member_change("member", status, make_user(10, "alice", "Alice")))
 
     assert alpha.members_on_disk(GROUP_KEY) == [{"username": "pending"}]
@@ -48,7 +48,7 @@ async def test_unlisted_user_joining_leaves_the_file_untouched(alpha):
     assert alpha.paths.whitelist.read_text(encoding="utf-8") == before
 
 
-async def test_restricted_member_keeps_permit_unchanged(alpha):
+async def test_restricted_member_keeps_entry_unchanged(alpha):
     before = alpha.members_on_disk(GROUP_KEY)
 
     await alpha.feed(member_change("member", "restricted", make_user(10, "alice")))

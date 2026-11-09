@@ -6,12 +6,14 @@ from pathlib import Path
 
 from aiogram.utils.token import TokenValidationError, validate_token
 
+from hq_access_bot.errors import FatalBotError
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _ENV_PATH = _PROJECT_ROOT / ".env"
 DATA_DIR = _PROJECT_ROOT / "data"
 
 
-class ConfigurationError(Exception):
+class ConfigurationError(FatalBotError):
     """A setting is missing or malformed, so the process must not start."""
 
 

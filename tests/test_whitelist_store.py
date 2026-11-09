@@ -5,7 +5,8 @@ import pytest
 
 from hq_access_bot.whitelist import store as store_module
 from hq_access_bot.whitelist.codec import dump_whitelist, parse_whitelist
-from hq_access_bot.whitelist.models import Group, Member
+from hq_access_bot.whitelist.identity import MemberRef
+from hq_access_bot.whitelist.models import Member
 from hq_access_bot.whitelist.store import WhitelistCorruptedError, WhitelistStore
 
 
@@ -33,7 +34,9 @@ def test_codec_keeps_every_member_field_through_a_round_trip():
 def test_codec_normalizes_usernames_and_trims_names():
     raw = {"-1": {"project": "A", "members": [{"username": "@ABC", "name": "  N  "}]}}
 
-    assert parse_whitelist(raw).groups["-1"].members == [Member(username="abc", full_name="N")]
+    assert list(parse_whitelist(raw).groups["-1"].members) == [
+        Member(username="abc", full_name="N")
+    ]
 
 
 def test_codec_merges_duplicate_members():
@@ -44,7 +47,7 @@ def test_codec_merges_duplicate_members():
         }
     }
 
-    assert parse_whitelist(raw).groups["-1"].members == [
+    assert list(parse_whitelist(raw).groups["-1"].members) == [
         Member(user_id=1),
         Member(username="b"),
     ]
@@ -82,7 +85,8 @@ async def test_transaction_refuses_to_overwrite_corrupted_file(store, path):
 
 async def test_transaction_persists_changes(store, path):
     async with store.transaction() as whitelist:
-        whitelist.groups["-1"] = Group("A", [Member(user_id=1)])
+        whitelist.register_group("-1", "A")
+        whitelist.groups["-1"].add_all([MemberRef(user_id=1)])
 
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "-1": {"project": "A", "members": [{"id": 1}]}
@@ -92,18 +96,18 @@ async def test_transaction_persists_changes(store, path):
 
 async def test_cyrillic_is_stored_readable(store, path):
     async with store.transaction() as whitelist:
-        whitelist.groups["-1"] = Group("Проект")
+        whitelist.register_group("-1", "Проект")
 
     assert "Проект" in path.read_text(encoding="utf-8")
 
 
 async def test_failed_transaction_changes_nothing(store, path):
     async with store.transaction() as whitelist:
-        whitelist.groups["-1"] = Group("A")
+        whitelist.register_group("-1", "A")
 
     with pytest.raises(RuntimeError):
         async with store.transaction() as whitelist:
-            whitelist.groups["-2"] = Group("B")
+            whitelist.register_group("-2", "B")
             raise RuntimeError
 
     assert set(json.loads(path.read_text(encoding="utf-8"))) == {"-1"}
@@ -126,7 +130,7 @@ async def test_replace_is_retried_while_file_is_locked(store, path, monkeypatch,
     monkeypatch.setattr(Path, "replace", flaky_replace)
 
     async with store.transaction() as whitelist:
-        whitelist.groups["-1"] = Group("A")
+        whitelist.register_group("-1", "A")
 
     assert "-1" in json.loads(path.read_text(encoding="utf-8"))
 
@@ -141,6 +145,6 @@ async def test_replace_gives_up_and_keeps_old_file(store, path, monkeypatch, no_
 
     with pytest.raises(PermissionError):
         async with store.transaction() as whitelist:
-            whitelist.groups["-1"] = Group("A")
+            whitelist.register_group("-1", "A")
 
     assert path.read_text(encoding="utf-8") == "{}"

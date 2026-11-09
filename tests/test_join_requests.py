@@ -45,7 +45,7 @@ async def test_group_outside_the_whitelist_declines_everyone(alpha):
     assert alpha.audit_events() == ["DECLINED id=10 @alice project=проект"]
 
 
-async def test_username_permit_gets_bound_to_real_account(harness):
+async def test_username_entry_gets_bound_to_real_account(harness):
     harness.given_whitelist({GROUP_KEY: {"project": "A", "members": [{"username": "pending"}]}})
 
     await harness.feed(join_request(make_user(30, "Pending", "Pen")))
@@ -72,7 +72,7 @@ async def test_entering_without_username_keeps_the_last_known_one(harness):
     ]
 
 
-async def test_permit_by_id_is_marked_as_joined_on_entry(harness):
+async def test_entry_by_id_is_marked_as_joined_on_entry(harness):
     harness.given_whitelist({GROUP_KEY: {"project": "A", "members": [{"id": 12}]}})
 
     await harness.feed(join_request(make_user(12, None, "Nik")))
@@ -80,7 +80,7 @@ async def test_permit_by_id_is_marked_as_joined_on_entry(harness):
     assert harness.members_on_disk(GROUP_KEY) == [{"id": 12, "in": True, "name": "Nik"}]
 
 
-async def test_binding_merges_username_permit_with_the_id_record(harness):
+async def test_binding_merges_username_entry_with_the_id_record(harness):
     harness.given_whitelist(
         {GROUP_KEY: {"project": "A", "members": [{"username": "nik"}, {"id": 12}]}}
     )
@@ -99,7 +99,7 @@ async def test_taken_over_username_does_not_grant_access(alpha):
     assert alpha.members_on_disk(GROUP_KEY) == [ALICE_RECORD]
 
 
-async def test_binding_a_permit_keeps_member_with_stale_same_username(harness):
+async def test_binding_an_entry_keeps_member_with_stale_same_username(harness):
     stale = {"id": 1, "username": "foo", "in": True}
     harness.given_whitelist({GROUP_KEY: {"project": "A", "members": [stale, {"username": "foo"}]}})
 

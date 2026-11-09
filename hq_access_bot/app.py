@@ -28,24 +28,54 @@ from hq_access_bot.whitelist.store import WhitelistStore
 
 logger = logging.getLogger(__name__)
 
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
 
 def run() -> None:
     """Run the bot, blocking the thread until it stops.
 
     Raises:
-        ConfigurationError: the settings are invalid.
-        InstanceAlreadyRunningError: the bot is already running.
-        WhitelistCorruptedError: the access list file is unreadable.
+        FatalBotError: invalid settings, another running instance or an unreadable access list.
     """
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    logging.basicConfig(level=logging.INFO, format=_LOG_FORMAT)
     settings = load_settings()
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     data_paths = DataPaths.inside(DATA_DIR)
     with hold_instance_lock(data_paths.instance_lock):
         asyncio.run(serve(settings, data_paths))
+
+
+async def serve(settings: Settings, data_paths: DataPaths) -> None:
+    """Validate the list file, prepare the bot and run until polling stops."""
+    whitelist_store = WhitelistStore(data_paths.whitelist)
+    whitelist = whitelist_store.read()
+    _report_loaded_state(whitelist, settings.admin_ids)
+
+    bot_defaults = DefaultBotProperties(parse_mode=ParseMode.HTML)
+    with closing(AuditLog(data_paths.audit_log)) as audit_log:
+        async with Bot(token=settings.bot_token, default=bot_defaults) as bot:
+            notifier = Notifier(bot, settings.admin_ids)
+            services = Services(whitelist_store, audit_log, notifier)
+            dispatcher = build_dispatcher(settings, services)
+            await _prepare_bot(bot, settings.admin_ids)
+            logger.info("Bot started. Admins: %s", set(settings.admin_ids) or "none")
+            await dispatcher.start_polling(bot)
+
+
+def _report_loaded_state(whitelist: Whitelist, admin_ids: frozenset[int]) -> None:
+    logger.info(
+        "Loaded groups: %d, members: %d",
+        len(whitelist.groups),
+        whitelist.count_unique_members(),
+    )
+    if not admin_ids:
+        logger.warning("ADMIN_IDS is empty, admin commands and notifications are unavailable.")
+
+
+async def _prepare_bot(bot: Bot, admin_ids: frozenset[int]) -> None:
+    """Keep pending updates: a join request filed while the bot was off would otherwise hang."""
+    await bot.delete_webhook(drop_pending_updates=False)
+    await setup_bot_profile(bot, admin_ids)
 
 
 def build_dispatcher(settings: Settings, services: Services) -> Dispatcher:
@@ -66,42 +96,5 @@ def build_dispatcher(settings: Settings, services: Services) -> Dispatcher:
     return dispatcher
 
 
-async def _prepare_bot(bot: Bot, admin_ids: frozenset[int]) -> None:
-    """Prepare the bot for polling.
-
-    Pending updates are kept: otherwise a join request filed while the bot was off
-    would hang unanswered forever.
-    """
-    await bot.delete_webhook(drop_pending_updates=False)
-    await setup_bot_profile(bot, admin_ids)
-
-
-async def serve(settings: Settings, data_paths: DataPaths) -> None:
-    """Validate the list file, prepare the bot and run until polling stops."""
-    whitelist_store = WhitelistStore(data_paths.whitelist)
-    _report_loaded_state(whitelist_store.read(), settings)
-
-    bot_defaults = DefaultBotProperties(parse_mode=ParseMode.HTML)
-    with closing(AuditLog(data_paths.audit_log)) as audit_log:
-        async with Bot(token=settings.bot_token, default=bot_defaults) as bot:
-            notifier = Notifier(bot, settings.admin_ids)
-            services = Services(whitelist_store, audit_log, notifier)
-            dispatcher = build_dispatcher(settings, services)
-            await _prepare_bot(bot, settings.admin_ids)
-            logger.info("Bot started. Admins: %s", set(settings.admin_ids) or "none")
-            await dispatcher.start_polling(bot)
-
-
-def _report_loaded_state(whitelist: Whitelist, settings: Settings) -> None:
-    logger.info(
-        "Loaded groups: %d, members: %d",
-        len(whitelist.groups),
-        whitelist.count_unique_members(),
-    )
-    if not settings.admin_ids:
-        logger.warning("ADMIN_IDS is empty, admin commands and notifications are unavailable.")
-
-
-async def _log_update_error(event: ErrorEvent) -> bool:
+async def _log_update_error(event: ErrorEvent) -> None:
     logger.error("Failed to process update", exc_info=event.exception)
-    return True

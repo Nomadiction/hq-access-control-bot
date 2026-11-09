@@ -28,7 +28,6 @@ class BotHarness:
     bot: Bot
     dispatcher: Dispatcher
     paths: DataPaths
-    store: WhitelistStore
     update_ids: Iterator[int]
 
     async def feed(self, update: dict[str, Any]) -> None:
@@ -82,5 +81,5 @@ def harness(tmp_path, settings, monkeypatch) -> Iterator[BotHarness]:
     audit_log = AuditLog(paths.audit_log)
     notifier = Notifier(bot, settings.admin_ids)
     dispatcher = build_dispatcher(settings, Services(store, audit_log, notifier))
-    yield BotHarness(session, bot, dispatcher, paths, store, count(1))
+    yield BotHarness(session, bot, dispatcher, paths, count(1))
     audit_log.close()

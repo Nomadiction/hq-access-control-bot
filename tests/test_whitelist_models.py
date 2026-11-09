@@ -1,14 +1,12 @@
 import pytest
 
-from hq_access_bot.whitelist.models import (
-    Group,
-    Member,
+from hq_access_bot.whitelist.identity import (
     MemberRef,
     ObservedMember,
     Person,
-    Whitelist,
     normalize_username,
 )
+from hq_access_bot.whitelist.models import Group, Member, Whitelist
 
 
 @pytest.mark.parametrize(
@@ -45,7 +43,9 @@ def test_reconcile_refreshes_member_found_in_group():
 
     group.reconcile({1: observed(1, "New", name="Fresh")})
 
-    assert group.members == [Member(user_id=1, username="new", has_joined=True, full_name="Fresh")]
+    assert list(group.members) == [
+        Member(user_id=1, username="new", has_joined=True, full_name="Fresh")
+    ]
 
 
 def test_reconcile_clears_username_the_member_no_longer_has():
@@ -61,16 +61,16 @@ def test_reconcile_removes_member_who_left():
 
     group.reconcile({1: observed(1, in_group=False)})
 
-    assert group.members == []
+    assert list(group.members) == []
 
 
-def test_reconcile_keeps_permit_not_used_yet():
-    permit = Member(user_id=1)
-    group = Group("A", [permit])
+def test_reconcile_keeps_entry_not_used_yet():
+    entry = Member(user_id=1)
+    group = Group("A", [entry])
 
     group.reconcile({1: observed(1, in_group=False)})
 
-    assert group.members == [permit]
+    assert list(group.members) == [entry]
 
 
 def test_reconcile_keeps_member_it_could_not_check():
@@ -79,7 +79,7 @@ def test_reconcile_keeps_member_it_could_not_check():
 
     group.reconcile({})
 
-    assert group.members == [member]
+    assert list(group.members) == [member]
 
 
 @pytest.mark.parametrize("twin_source", ["current", "stored"])
@@ -97,7 +97,7 @@ def test_reconcile_drops_username_twin_of_departed_member(twin_source):
 
     group.reconcile({1: observed(1, observed_username, in_group=False)})
 
-    assert group.members == [Member(username="other")]
+    assert list(group.members) == [Member(username="other")]
 
 
 def test_reconcile_merges_username_twin_into_member_with_id():
@@ -106,6 +106,15 @@ def test_reconcile_merges_username_twin_into_member_with_id():
     group.reconcile({1: observed(1, "twin")})
 
     assert [m.user_id for m in group.members] == [1]
+
+
+def test_remove_all_reports_removed_and_unmatched_references():
+    group = Group("A", [Member(user_id=1, username="a")])
+
+    change = group.remove_all([MemberRef(username="a"), MemberRef(username="ghost")])
+
+    assert (change.applied, change.skipped) == (["@a"], ["@ghost"])
+    assert group.members == ()
 
 
 def test_find_group_key_prefers_exact_chat_id_then_project_name():

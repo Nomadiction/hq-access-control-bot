@@ -2,10 +2,25 @@ import pytest
 from aiogram.methods import SendMessage
 
 from hq_access_bot.handlers.command_args import parse_target_and_members
-from hq_access_bot.whitelist.models import MemberRef
+from hq_access_bot.whitelist.identity import MemberRef
+from hq_access_bot.whitelist.models import Group, Whitelist
 from tests.support import ALICE_RECORD, GROUP_KEY, STRANGER, command, supergroup
 
 SECOND_KEY = "-1002"
+TELEGRAM_MESSAGE_LIMIT = 4096
+KNOWN_PROJECTS = Whitelist(
+    {
+        "-1": Group("Alpha"),
+        "-2": Group("Beta Two"),
+        "-3": Group("Test"),
+        "-4": Group("Test 2"),
+        "-5": Group("Release 3"),
+    }
+)
+
+
+def count_utf16_units(text):
+    return len(text.encode("utf-16-le")) // 2
 
 
 @pytest.fixture
@@ -34,10 +49,16 @@ def groups(harness):
         ("Beta Two @a", "Beta Two", [MemberRef(username="a")]),
         ("-100123 7", "-100123", [MemberRef(user_id=7)]),
         ("Alpha @", "Alpha", []),
+        ("Test 7", "Test", [MemberRef(user_id=7)]),
+        ("Test 2 @a", "Test 2", [MemberRef(username="a")]),
+        ("Test 2 7", "Test 2", [MemberRef(user_id=7)]),
+        ("Test 2", "Test 2", []),
+        ("Release 3 8 9", "Release 3", [MemberRef(user_id=8), MemberRef(user_id=9)]),
+        ("Unknown 3 @a", "Unknown", [MemberRef(user_id=3), MemberRef(username="a")]),
     ],
 )
 def test_parse_target_and_members(args, expected_target, expected_refs):
-    assert parse_target_and_members(args) == (expected_target, expected_refs)
+    assert parse_target_and_members(args, KNOWN_PROJECTS) == (expected_target, expected_refs)
 
 
 @pytest.mark.parametrize("text", ["/status", "/add Alpha @x", "/remove Alpha @alice", "/reload"])
@@ -80,6 +101,14 @@ async def test_add_accepts_multi_word_project_in_any_case(groups):
     await groups.feed(command("/add beta two @x"))
 
     assert groups.members_on_disk(SECOND_KEY)[1] == {"username": "x"}
+
+
+async def test_add_targets_a_project_whose_name_ends_in_a_number(harness):
+    harness.given_whitelist({GROUP_KEY: {"project": "Test 2", "members": []}})
+
+    await harness.feed(command("/add Test 2 @x"))
+
+    assert harness.members_on_disk(GROUP_KEY) == [{"username": "x"}]
 
 
 async def test_add_with_only_existing_members_writes_no_audit(groups):
@@ -127,6 +156,14 @@ async def test_remove_by_id_labels_member_without_username(groups):
     assert "🗑 Удалено: id 20" in groups.admin_notices()[0]
 
 
+async def test_remove_targets_a_project_whose_name_ends_in_a_number(harness):
+    harness.given_whitelist({GROUP_KEY: {"project": "Test 2", "members": [{"username": "x"}]}})
+
+    await harness.feed(command("/remove Test 2 @x"))
+
+    assert harness.members_on_disk(GROUP_KEY) == []
+
+
 async def test_remove_nobody_is_reported_and_not_audited(groups):
     await groups.feed(command("/remove Alpha @ghost"))
 
@@ -163,6 +200,35 @@ async def test_reload_syncs_with_telegram_and_lists_members(groups):
     report = groups.admin_notices()[0]
     assert "@pending <i>· ожидает входа</i>" in report
     assert "@fresh <tg-spoiler>20</tg-spoiler>" in report
+
+
+async def test_reload_splits_a_long_list_within_the_telegram_limit(harness):
+    members = [{"id": n, "username": f"user_{n:05d}", "in": True} for n in range(1, 400)]
+    harness.given_whitelist({GROUP_KEY: {"project": "A", "members": members}})
+
+    await harness.feed(command("/reload"))
+
+    messages = harness.admin_notices()
+    assert len(messages) > 1
+    assert all(count_utf16_units(message) <= TELEGRAM_MESSAGE_LIMIT for message in messages)
+    combined = "\n".join(messages)
+    assert all(f"@user_{n:05d}" in combined for n in range(1, 400))
+
+
+async def test_reload_limit_counts_characters_outside_the_basic_plane(harness):
+    wide_name = "𝕍" * 40
+    members = [{"id": n, "name": wide_name, "in": True} for n in range(1, 200)]
+    harness.given_whitelist({GROUP_KEY: {"project": "A", "members": members}})
+
+    await harness.feed(command("/reload"))
+
+    assert all(count_utf16_units(m) <= TELEGRAM_MESSAGE_LIMIT for m in harness.admin_notices())
+
+
+async def test_reload_keeps_a_short_list_in_one_message(groups):
+    await groups.feed(command("/reload"))
+
+    assert len(groups.admin_notices()) == 1
 
 
 async def test_reload_keeps_members_telegram_could_not_confirm(groups):

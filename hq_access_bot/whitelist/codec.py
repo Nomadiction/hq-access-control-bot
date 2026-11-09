@@ -2,16 +2,24 @@
 
 from typing import Any
 
-from hq_access_bot.whitelist.models import Group, Member, Whitelist, normalize_username
+from hq_access_bot.whitelist.identity import normalize_username
+from hq_access_bot.whitelist.models import Group, Member, Whitelist
+
+
+class WhitelistFormatError(ValueError):
+    """The JSON is well formed but does not describe an access list."""
 
 
 def parse_whitelist(raw: dict[str, Any]) -> Whitelist:
     """Parse the contents of whitelist.json.
 
     Raises:
-        ValueError, KeyError, TypeError, AttributeError: the file structure is invalid.
+        WhitelistFormatError: the structure is invalid.
     """
-    return Whitelist({key: _parse_group(group) for key, group in raw.items()})
+    try:
+        return Whitelist({key: _parse_group(group) for key, group in raw.items()})
+    except (ValueError, KeyError, TypeError, AttributeError) as error:
+        raise WhitelistFormatError(repr(error)) from error
 
 
 def dump_whitelist(whitelist: Whitelist) -> dict[str, Any]:
@@ -26,7 +34,7 @@ def _parse_group(raw: dict[str, Any]) -> Group:
     for raw_member in raw["members"]:
         member = _parse_member(raw_member)
         members.setdefault(member.identity, member)
-    return Group(project=raw.get("project", ""), members=list(members.values()))
+    return Group(raw.get("project", ""), list(members.values()))
 
 
 def _parse_member(raw: dict[str, Any]) -> Member:

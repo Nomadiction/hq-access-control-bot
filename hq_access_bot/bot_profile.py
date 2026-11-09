@@ -48,16 +48,18 @@ _ADMIN_COMMANDS = [
 
 async def setup_bot_profile(bot: Bot, admin_ids: frozenset[int]) -> None:
     """Update the profile. The bot works without it, so failures are only logged."""
-    await _apply("description", bot.set_my_description(_DESCRIPTION))
-    await _apply("short description", bot.set_my_short_description(_SHORT_DESCRIPTION))
-    await _apply("menu button", bot.set_chat_menu_button(menu_button=MenuButtonCommands()))
-    await _apply("command menu", bot.set_my_commands(_USER_COMMANDS, BotCommandScopeDefault()))
+    await _apply_setting("description", bot.set_my_description(_DESCRIPTION))
+    await _apply_setting("short description", bot.set_my_short_description(_SHORT_DESCRIPTION))
+    await _apply_setting("menu button", bot.set_chat_menu_button(menu_button=MenuButtonCommands()))
+    await _apply_setting(
+        "command menu", bot.set_my_commands(_USER_COMMANDS, BotCommandScopeDefault())
+    )
     for admin_id in admin_ids:
         admin_scope = BotCommandScopeChat(chat_id=admin_id)
-        await _apply("admin menu", bot.set_my_commands(_ADMIN_COMMANDS, admin_scope))
+        await _apply_setting("admin menu", bot.set_my_commands(_ADMIN_COMMANDS, admin_scope))
 
 
-async def _apply(setting_name: str, request: Awaitable[object]) -> None:
+async def _apply_setting(setting_name: str, request: Awaitable[object]) -> None:
     try:
         await request
     except TelegramAPIError as error:

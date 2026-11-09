@@ -1,4 +1,4 @@
-"""Handler dependencies that are always used together."""
+"""Collaborators bundled so handlers and their helpers take a single argument."""
 
 from dataclasses import dataclass
 

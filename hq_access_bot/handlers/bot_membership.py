@@ -1,16 +1,16 @@
 """Reaction to changes in the bot's own status in chats."""
 
-import logging
-
 from aiogram import Router
 from aiogram.enums import ChatMemberStatus, ChatType
 from aiogram.types import ChatMemberUpdated
 
 from hq_access_bot import texts
-from hq_access_bot.handlers.telegram_mapping import DEPARTED_STATUSES, PRESENT_STATUSES
+from hq_access_bot.handlers.telegram_mapping import (
+    DEPARTED_STATUSES,
+    PRESENT_STATUSES,
+    build_chat_key,
+)
 from hq_access_bot.services import Services
-
-logger = logging.getLogger(__name__)
 
 _GROUP_CHAT_TYPES = frozenset({ChatType.GROUP, ChatType.SUPERGROUP})
 _PROMOTABLE_STATUSES = frozenset({ChatMemberStatus.MEMBER, ChatMemberStatus.RESTRICTED})
@@ -40,23 +40,21 @@ async def handle_bot_status_change(event: ChatMemberUpdated, services: Services)
 
 
 async def _forget_group(event: ChatMemberUpdated, services: Services) -> None:
-    chat_key = str(event.chat.id)
+    chat_key = build_chat_key(event.chat)
     async with services.whitelist_store.transaction() as whitelist:
         removed_group = whitelist.remove_group(chat_key)
     if removed_group is not None:
         title = _get_chat_title(event)
-        logger.info("GROUP-REMOVED %s «%s» (bot removed)", chat_key, title)
         services.audit_log.record_group_lost(chat_key, title)
         await services.notifier.notify_admins(texts.format_bot_removed_notice(title))
 
 
 async def _track_supergroup(event: ChatMemberUpdated, services: Services) -> None:
-    chat_key = str(event.chat.id)
+    chat_key = build_chat_key(event.chat)
     title = _get_chat_title(event)
     async with services.whitelist_store.transaction() as whitelist:
         is_new_group = whitelist.register_group(chat_key, title)
     if is_new_group:
-        logger.info("AUTO-ADDED group %s «%s»", chat_key, title)
         services.audit_log.record_group_registered(chat_key, title)
         await services.notifier.notify_admins(texts.format_group_registered_notice(title))
     elif _is_promotion(event):

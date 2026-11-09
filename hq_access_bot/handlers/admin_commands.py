@@ -1,6 +1,9 @@
 """Admin commands, available only in a private chat with the bot."""
 
+import logging
 import time
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 
 from aiogram import Bot, Router
 from aiogram.enums import ChatType
@@ -9,19 +12,45 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from hq_access_bot import texts
+from hq_access_bot.audit_log import AuditLog
 from hq_access_bot.config import Settings
 from hq_access_bot.handlers.command_args import parse_target_and_members
 from hq_access_bot.handlers.telegram_mapping import DEPARTED_STATUSES, build_person
 from hq_access_bot.services import Services
-from hq_access_bot.whitelist.models import AddOutcome, ObservedMember, Whitelist
+from hq_access_bot.whitelist.identity import MemberRef, ObservedMember
+from hq_access_bot.whitelist.models import Group, MemberChange, Whitelist
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _MemberOperation:
+    """The steps in which adding and removing members differ."""
+
+    usage: str
+    apply: Callable[[Group, Iterable[MemberRef]], MemberChange]
+    record: Callable[[AuditLog, str, list[str]], None]
+    format_report: Callable[[str, MemberChange], str]
+
+
+_MEMBER_OPERATIONS = {
+    "add": _MemberOperation(
+        texts.ADD_USAGE, Group.add_all, AuditLog.record_members_added, texts.format_add_report
+    ),
+    "remove": _MemberOperation(
+        texts.REMOVE_USAGE,
+        Group.remove_all,
+        AuditLog.record_members_removed,
+        texts.format_removal_report,
+    ),
+}
 
 
 def build_router() -> Router:
     router = Router(name=__name__)
     router.message.filter(_is_admin_in_private_chat)
     router.message.register(handle_status, Command("status"))
-    router.message.register(handle_add, Command("add"))
-    router.message.register(handle_remove, Command("remove"))
+    router.message.register(handle_member_change, Command(*_MEMBER_OPERATIONS))
     router.message.register(handle_delete_group, Command("delgroup"))
     router.message.register(handle_reload, Command("reload"))
     return router
@@ -38,40 +67,25 @@ async def handle_status(message: Message, services: Services, started_at_seconds
     )
 
 
-async def handle_add(message: Message, command: CommandObject, services: Services) -> None:
-    target, refs = parse_target_and_members(command.args)
+async def handle_member_change(
+    message: Message, command: CommandObject, services: Services
+) -> None:
+    operation = _MEMBER_OPERATIONS[command.command]
+    target, refs = parse_target_and_members(command.args, services.whitelist_store.read())
     if not target or not refs:
-        await message.answer(texts.ADD_USAGE)
+        await message.answer(operation.usage)
         return
 
     async with services.whitelist_store.transaction() as whitelist:
         group = whitelist.find_group(target)
-        outcome = group.add_all(refs) if group else AddOutcome([], [])
+        change = operation.apply(group, refs) if group else None
 
-    if group is None:
+    if change is None:
         await message.answer(texts.format_group_not_found(target))
         return
-    if outcome.added:
-        services.audit_log.record_members_added(group.project, outcome.added)
-    await message.answer(texts.format_add_report(group.project, outcome))
-
-
-async def handle_remove(message: Message, command: CommandObject, services: Services) -> None:
-    target, refs = parse_target_and_members(command.args)
-    if not target or not refs:
-        await message.answer(texts.REMOVE_USAGE)
-        return
-
-    async with services.whitelist_store.transaction() as whitelist:
-        group = whitelist.find_group(target)
-        removed = group.remove_all(refs) if group else []
-
-    if group is None:
-        await message.answer(texts.format_group_not_found(target))
-        return
-    if removed:
-        services.audit_log.record_members_removed(group.project, removed)
-    await message.answer(texts.format_removal_report(group.project, removed))
+    if change.applied:
+        operation.record(services.audit_log, group.project, change.applied)
+    await message.answer(operation.format_report(group.project, change))
 
 
 async def handle_delete_group(message: Message, command: CommandObject, services: Services) -> None:
@@ -102,7 +116,8 @@ async def handle_reload(message: Message, bot: Bot, services: Services) -> None:
     observed = await _observe_all_members(bot, snapshot)
     async with store.transaction() as whitelist:
         whitelist.reconcile(observed)
-    await message.answer(texts.format_access_lists(whitelist))
+    for text in texts.format_access_list_messages(whitelist):
+        await message.answer(text)
 
 
 async def _is_admin_in_private_chat(message: Message, settings: Settings) -> bool:
@@ -124,7 +139,8 @@ async def _observe_all_members(
 async def _observe_member(bot: Bot, chat_id: int, user_id: int) -> ObservedMember | None:
     try:
         chat_member = await bot.get_chat_member(chat_id, user_id)
-    except TelegramAPIError:
+    except TelegramAPIError as error:
+        logger.warning("Could not check member %s of chat %s: %s", user_id, chat_id, error)
         return None
     return ObservedMember(
         person=build_person(chat_member.user),

@@ -6,14 +6,15 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from hq_access_bot.whitelist.codec import dump_whitelist, parse_whitelist
+from hq_access_bot.errors import FatalBotError
+from hq_access_bot.whitelist.codec import WhitelistFormatError, dump_whitelist, parse_whitelist
 from hq_access_bot.whitelist.models import Whitelist
 
 _REPLACE_RETRIES = 5
 _REPLACE_RETRY_PAUSE_SECONDS = 0.05
 
 
-class WhitelistCorruptedError(Exception):
+class WhitelistCorruptedError(FatalBotError):
     """The list file is unreadable. Overwriting it would lose the data, so it stays as is."""
 
 
@@ -33,7 +34,7 @@ class WhitelistStore:
             return parse_whitelist(raw)
         except FileNotFoundError:
             return Whitelist()
-        except (ValueError, KeyError, TypeError, AttributeError) as error:
+        except (json.JSONDecodeError, WhitelistFormatError) as error:
             raise WhitelistCorruptedError(f"{self._path} is corrupted: {error!r}") from error
 
     @asynccontextmanager
