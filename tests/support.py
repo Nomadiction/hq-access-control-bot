@@ -20,6 +20,8 @@ ADMIN_ID = 111
 BOT_ID = 123456
 GROUP_ID = -1001
 GROUP_KEY = str(GROUP_ID)
+PANEL_MESSAGE_ID = 70
+TELEGRAM_MESSAGE_LIMIT = 4096
 ALICE_RECORD = {"id": 10, "username": "alice", "in": True, "name": "Alice"}
 FAKE_TOKEN = f"{BOT_ID}:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
@@ -71,6 +73,10 @@ _RESTRICTIONS = {
 }
 
 ErrorFactory = Callable[[TelegramMethod[Any]], Exception]
+
+
+def count_utf16_units(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
 
 
 def retry_after(seconds: int) -> ErrorFactory:
@@ -232,6 +238,24 @@ def command(
             "chat": chat or private_chat(sender["id"]),
             "from": sender,
             "text": text,
+        }
+    }
+
+
+def button_press(data: str, sender: dict | None = None, chat: dict | None = None) -> dict:
+    sender = sender or make_user(ADMIN_ID, "root")
+    return {
+        "callback_query": {
+            "id": "1",
+            "from": sender,
+            "chat_instance": "instance",
+            "data": data,
+            "message": {
+                "message_id": PANEL_MESSAGE_ID,
+                "date": 1,
+                "chat": chat or private_chat(sender["id"]),
+                "text": "panel",
+            },
         }
     }
 

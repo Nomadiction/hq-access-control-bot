@@ -8,7 +8,8 @@ import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.methods import SendMessage
+from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendMessage
+from aiogram.types import InlineKeyboardButton
 
 from hq_access_bot import telegram_retry
 from hq_access_bot.app import build_dispatcher
@@ -18,7 +19,7 @@ from hq_access_bot.handlers import public_commands
 from hq_access_bot.notifier import Notifier
 from hq_access_bot.services import Services
 from hq_access_bot.whitelist.store import WhitelistStore
-from tests.support import ADMIN_ID, FAKE_TOKEN, RecordingSession
+from tests.support import ADMIN_ID, FAKE_TOKEN, RecordingSession, button_press, command
 
 
 @dataclass
@@ -53,6 +54,34 @@ class BotHarness:
 
     def admin_notices(self) -> list[str]:
         return self.texts_sent_to(ADMIN_ID)
+
+    def current_screen(self) -> SendMessage | EditMessageText:
+        """The latest text the bot showed, sent as a new message or by editing one."""
+        return next(
+            call
+            for call in reversed(self.session.calls)
+            if isinstance(call, SendMessage | EditMessageText)
+        )
+
+    def screen_buttons(self) -> list[InlineKeyboardButton]:
+        keyboard = self.current_screen().reply_markup
+        return [button for row in keyboard.inline_keyboard for button in row] if keyboard else []
+
+    def screen_labels(self) -> list[str]:
+        return [button.text for button in self.screen_buttons()]
+
+    def screen_button(self, label: str) -> InlineKeyboardButton:
+        return next(button for button in self.screen_buttons() if label in button.text)
+
+    async def press(self, label: str) -> None:
+        await self.feed(button_press(self.screen_button(label).callback_data))
+
+    async def open_groups(self) -> None:
+        await self.feed(command("/start"))
+        await self.press("Группы")
+
+    def last_toast(self) -> str | None:
+        return self.calls_of(AnswerCallbackQuery)[-1].text
 
     def audit_events(self) -> list[str]:
         if not self.paths.audit_log.exists():

@@ -2,14 +2,17 @@
 
 from collections.abc import Mapping
 from html import escape
+from itertools import batched
 
 from hq_access_bot.whitelist.identity import Person
 from hq_access_bot.whitelist.models import Group, Member, MemberChange, Whitelist
 
 UNKNOWN_PROJECT = "проект"
 
+_BOT_TITLE = "🔑 <b>HQ Access Bot</b>"
+
 ADMIN_WELCOME = (
-    "🔑 <b>HQ Access Bot</b>\n"
+    f"{_BOT_TITLE}\n"
     "<i>Пропускной контроль рабочих групп проектов.</i>\n\n"
     "<b>Как это работает</b>\n"
     "<blockquote>Пользователь подаёт заявку по пригласительной ссылке. Бот "
@@ -61,6 +64,18 @@ DELGROUP_USAGE = (
 
 EMPTY_WHITELIST = "Список доступа пуст."
 
+BUTTON_GROUPS = "👥 Группы"
+BUTTON_STATUS = "📊 Статус"
+BUTTON_BACK = "← Назад"
+BUTTON_PREVIOUS_PAGE = "◀️"
+BUTTON_NEXT_PAGE = "▶️"
+
+STALE_BUTTON_NOTICE = "Эта кнопка больше не работает."
+GROUP_GONE_NOTICE = "Этой группы уже нет в списке."
+PANEL_FAILURE_NOTICE = "⚠️ Не получилось. Подробности в логе бота."
+
+_MEMBERS_PER_CARD_PAGE = 25
+
 _SECONDS_PER_HOUR = 3600
 _SECONDS_PER_MINUTE = 60
 
@@ -72,7 +87,7 @@ _UTF16_UNIT_BYTES = 2
 
 def format_user_welcome(support_username: str) -> str:
     return (
-        "🔑 <b>HQ Access Bot</b>\n"
+        f"{_BOT_TITLE}\n"
         "<i>Система доступа к рабочим группам проектов.</i>\n\n"
         "<blockquote>Чтобы войти в проект, откройте пригласительную ссылку и "
         "подайте заявку. Если вы в списке доступа - она одобрится <u>автоматически</u> "
@@ -189,15 +204,51 @@ def format_own_id_reply(person: Person) -> str:
     )
 
 
-def format_status_report(uptime_seconds: int, group_count: int, member_count: int) -> str:
+def format_status_report(uptime_seconds: int, whitelist: Whitelist) -> str:
     hours, remainder_seconds = divmod(uptime_seconds, _SECONDS_PER_HOUR)
     minutes = remainder_seconds // _SECONDS_PER_MINUTE
     return (
         "📊 <b>Статус бота</b>\n"
         "Состояние: <b>работает</b> ✅\n"
         f"Аптайм: <b>{hours} ч {minutes} мин</b>\n"
-        f"Групп: <b>{group_count}</b> · Участников: <b>{member_count}</b>"
+        f"{_format_counts(whitelist)}"
     )
+
+
+def format_panel_home(whitelist: Whitelist) -> str:
+    return f"{_BOT_TITLE}\n{_format_counts(whitelist)}\n\n<i>Все команды: /help</i>"
+
+
+def format_groups_title(page: int, page_count: int) -> str:
+    return f"👥 <b>Группы</b>\n<i>Выберите проект</i>{_format_page_footer(page, page_count)}"
+
+
+def format_group_button(group: Group) -> str:
+    label = f"{group.project} · {len(group.members)}"
+    return label if group.is_active else f"💤 {label}"
+
+
+def format_group_card_pages(chat_key: str, group: Group) -> list[str]:
+    """Render a group as pages: a long list has to stay readable and within Telegram's limit."""
+    header = (
+        f"{_format_group_header(group)}\n"
+        f"Участников: <b>{len(group.members)}</b> · chat_id <code>{chat_key}</code>\n\n"
+    )
+    member_count = len(group.members)
+    # Every page holds at least one member, so the longest footer is the one on page N of N.
+    longest_footer = _format_page_footer(member_count - 1, member_count)
+    unit_limit = (
+        _MESSAGE_LIMIT_UTF16_UNITS - _count_utf16_units(header) - _count_utf16_units(longest_footer)
+    )
+    pages = [
+        page
+        for chunk in batched(_format_member_lines(group), _MEMBERS_PER_CARD_PAGE)
+        for page in _split_into_messages(list(chunk), unit_limit)
+    ]
+    return [
+        f"{header}{page}{_format_page_footer(index, len(pages))}"
+        for index, page in enumerate(pages)
+    ]
 
 
 def format_group_not_found(target: str) -> str:
@@ -250,18 +301,19 @@ def format_access_list_messages(whitelist: Whitelist) -> list[str]:
     """Render the access lists as one or more messages that fit Telegram's size limit."""
     lines = ["📋 <b>Списки доступа</b>"]
     for group in whitelist.groups.values():
-        member_lines = [_format_member_line(m) for m in group.members] or ["<i>пусто</i>"]
-        lines += ["", _format_group_header(group), *member_lines]
+        lines += ["", _format_group_header(group), *_format_member_lines(group)]
     return _split_into_messages(lines)
 
 
-def _split_into_messages(lines: list[str]) -> list[str]:
+def _split_into_messages(
+    lines: list[str], unit_limit: int = _MESSAGE_LIMIT_UTF16_UNITS
+) -> list[str]:
     """Group whole lines into messages, so a split never falls inside an HTML tag."""
     messages: list[str] = []
     current = ""
     for line in lines:
         candidate = f"{current}\n{line}" if current else line
-        if _count_utf16_units(candidate) > _MESSAGE_LIMIT_UTF16_UNITS:
+        if _count_utf16_units(candidate) > unit_limit:
             messages.append(current.rstrip("\n"))
             current = line
         else:
@@ -272,6 +324,21 @@ def _split_into_messages(lines: list[str]) -> list[str]:
 
 def _count_utf16_units(text: str) -> int:
     return len(text.encode("utf-16-le")) // _UTF16_UNIT_BYTES
+
+
+def _format_counts(whitelist: Whitelist) -> str:
+    return (
+        f"Групп: <b>{len(whitelist.groups)}</b> · "
+        f"Участников: <b>{whitelist.count_unique_members()}</b>"
+    )
+
+
+def _format_page_footer(page: int, page_count: int) -> str:
+    return f"\n\n<i>Стр. {page + 1} из {page_count}</i>" if page_count > 1 else ""
+
+
+def _format_member_lines(group: Group) -> list[str]:
+    return [_format_member_line(member) for member in group.members] or ["<i>пусто</i>"]
 
 
 def _format_group_header(group: Group) -> str:

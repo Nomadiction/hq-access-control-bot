@@ -4,10 +4,17 @@ from aiogram.methods import GetChatMember, SendMessage
 from hq_access_bot.handlers.command_args import parse_target_and_members
 from hq_access_bot.whitelist.identity import MemberRef
 from hq_access_bot.whitelist.models import Group, Whitelist
-from tests.support import ALICE_RECORD, GROUP_KEY, STRANGER, command, supergroup
+from tests.support import (
+    ALICE_RECORD,
+    GROUP_KEY,
+    STRANGER,
+    TELEGRAM_MESSAGE_LIMIT,
+    command,
+    count_utf16_units,
+    supergroup,
+)
 
 SECOND_KEY = "-1002"
-TELEGRAM_MESSAGE_LIMIT = 4096
 KNOWN_PROJECTS = Whitelist(
     {
         "-1": Group("Alpha"),
@@ -17,10 +24,6 @@ KNOWN_PROJECTS = Whitelist(
         "-5": Group("Release 3"),
     }
 )
-
-
-def count_utf16_units(text):
-    return len(text.encode("utf-16-le")) // 2
 
 
 @pytest.fixture

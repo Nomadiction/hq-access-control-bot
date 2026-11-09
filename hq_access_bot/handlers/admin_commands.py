@@ -1,12 +1,10 @@
 """Admin commands, available only in a private chat with the bot."""
 
 import logging
-import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from aiogram import Bot, Router
-from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
@@ -15,7 +13,12 @@ from hq_access_bot import texts
 from hq_access_bot.audit_log import AuditLog
 from hq_access_bot.config import Settings
 from hq_access_bot.handlers.command_args import MemberCommandArgs, parse_target_and_members
-from hq_access_bot.handlers.telegram_mapping import build_person, is_present_in_chat
+from hq_access_bot.handlers.panel_screens import build_status_text
+from hq_access_bot.handlers.telegram_mapping import (
+    build_person,
+    is_admin_in_private_chat,
+    is_present_in_chat,
+)
 from hq_access_bot.services import Services
 from hq_access_bot.whitelist.identity import MemberRef, ObservedMember
 from hq_access_bot.whitelist.models import Group, Member, MemberChange, Whitelist
@@ -57,14 +60,7 @@ def build_router() -> Router:
 
 
 async def handle_status(message: Message, services: Services, started_at_seconds: float) -> None:
-    whitelist = services.whitelist_store.read()
-    await message.answer(
-        texts.format_status_report(
-            uptime_seconds=int(time.monotonic() - started_at_seconds),
-            group_count=len(whitelist.groups),
-            member_count=whitelist.count_unique_members(),
-        )
-    )
+    await message.answer(build_status_text(services.whitelist_store.read(), started_at_seconds))
 
 
 async def handle_member_change(
@@ -150,7 +146,7 @@ async def _apply_member_operation(
 
 
 async def _is_admin_in_private_chat(message: Message, settings: Settings) -> bool:
-    return message.chat.type == ChatType.PRIVATE and message.from_user.id in settings.admin_ids
+    return is_admin_in_private_chat(message.chat, message.from_user, settings.admin_ids)
 
 
 async def _observe_all_members(

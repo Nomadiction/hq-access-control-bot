@@ -23,6 +23,7 @@ from hq_access_bot.config import (
 )
 from hq_access_bot.handlers import (
     admin_commands,
+    admin_panel,
     bot_membership,
     chat_membership,
     join_requests,
@@ -119,6 +120,7 @@ def build_dispatcher(settings: Settings, services: Services) -> Dispatcher:
         bot_membership.build_router(),
         public_commands.build_router(),
         admin_commands.build_router(),
+        admin_panel.build_router(),
     )
     dispatcher.errors.register(_report_update_error)
     return dispatcher

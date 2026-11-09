@@ -1,6 +1,6 @@
 """Translation of Telegram types and statuses into domain concepts."""
 
-from aiogram.enums import ChatMemberStatus
+from aiogram.enums import ChatMemberStatus, ChatType
 from aiogram.types import Chat, ChatMember, ChatMemberRestricted, User
 
 from hq_access_bot.whitelist.identity import Person
@@ -9,6 +9,11 @@ DEPARTED_STATUSES = frozenset({ChatMemberStatus.LEFT, ChatMemberStatus.KICKED})
 PRESENT_STATUSES = frozenset(
     {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
 )
+
+
+def is_admin_in_private_chat(chat: Chat, user: User, admin_ids: frozenset[int]) -> bool:
+    """Admin tools show member lists, so they stay out of group chats."""
+    return chat.type == ChatType.PRIVATE and user.id in admin_ids
 
 
 def is_present_in_chat(chat_member: ChatMember) -> bool:

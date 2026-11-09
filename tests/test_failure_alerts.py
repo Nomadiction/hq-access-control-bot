@@ -34,6 +34,39 @@ async def test_failure_is_reported_again_after_the_interval(broken_list, monkeyp
     assert len(broken_list.admin_notices()) == 2
 
 
+async def test_admin_start_with_a_broken_list_shows_help_and_alerts(broken_list):
+    await broken_list.feed(command("/start"))
+
+    help_text, alert = broken_list.admin_notices()
+    assert "<code>/add</code>" in help_text
+    assert "WhitelistCorruptedError" in alert
+
+
+async def test_repeated_admin_start_with_a_broken_list_still_gets_an_answer(broken_list):
+    await broken_list.feed(command("/start"))
+    await broken_list.feed(command("/start"))
+
+    assert sum("<code>/add</code>" in text for text in broken_list.admin_notices()) == 2
+
+
+async def test_admin_clear_with_a_broken_list_shows_help_and_alerts(broken_list):
+    await broken_list.feed(command("/clear", message_id=1))
+
+    help_text, alert = broken_list.admin_notices()
+    assert "<code>/add</code>" in help_text
+    assert "WhitelistCorruptedError" in alert
+
+
+async def test_panel_button_with_a_broken_list_stops_spinning_and_alerts(harness):
+    await harness.feed(command("/start"))
+    harness.paths.whitelist.write_text("{ broken", encoding="utf-8")
+
+    await harness.press("Группы")
+
+    assert harness.last_toast() == "⚠️ Не получилось. Подробности в логе бота."
+    assert "WhitelistCorruptedError" in harness.admin_notices()[-1]
+
+
 async def test_different_failures_are_throttled_separately(harness):
     notifier = Notifier(harness.bot, frozenset({ADMIN_ID}))
 

@@ -12,7 +12,10 @@ from aiogram.types import LinkPreviewOptions, Message
 
 from hq_access_bot import texts
 from hq_access_bot.config import Settings
-from hq_access_bot.handlers.telegram_mapping import build_person
+from hq_access_bot.handlers.panel_screens import build_home_screen
+from hq_access_bot.handlers.telegram_mapping import build_person, is_admin_in_private_chat
+from hq_access_bot.services import Services
+from hq_access_bot.whitelist.store import WhitelistCorruptedError
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +33,8 @@ _MAX_CONCURRENT_CLEANUPS = 3
 
 def build_router() -> Router:
     router = Router(name=__name__)
-    router.message.register(handle_welcome, Command("start", "help"))
+    router.message.register(handle_start, Command("start"))
+    router.message.register(handle_help, Command("help"))
     router.message.register(handle_chat_id, Command("id"))
     router.message.register(handle_own_id, Command("me"))
     router.message.register(
@@ -39,7 +43,21 @@ def build_router() -> Router:
     return router
 
 
-async def handle_welcome(message: Message, settings: Settings) -> None:
+async def handle_start(message: Message, settings: Settings, services: Services) -> None:
+    if not is_admin_in_private_chat(message.chat, message.from_user, settings.admin_ids):
+        await handle_help(message, settings)
+        return
+    try:
+        whitelist = services.whitelist_store.read()
+    except WhitelistCorruptedError:
+        # The failure alert is throttled, and the admin still needs an answer every time.
+        await handle_help(message, settings)
+        raise
+    screen = build_home_screen(whitelist)
+    await message.answer(screen.text, reply_markup=screen.keyboard)
+
+
+async def handle_help(message: Message, settings: Settings) -> None:
     is_admin = message.from_user.id in settings.admin_ids
     text = texts.ADMIN_WELCOME if is_admin else texts.format_user_welcome(settings.support_username)
     await message.answer(text, link_preview_options=LinkPreviewOptions(is_disabled=True))
@@ -59,7 +77,9 @@ class _HistoryCleaner:
     def __init__(self) -> None:
         self._busy_chat_ids: set[int] = set()
 
-    async def handle_clear(self, message: Message, bot: Bot, settings: Settings) -> None:
+    async def handle_clear(
+        self, message: Message, bot: Bot, settings: Settings, services: Services
+    ) -> None:
         chat_id = message.chat.id
         if chat_id in self._busy_chat_ids or len(self._busy_chat_ids) >= _MAX_CONCURRENT_CLEANUPS:
             return
@@ -68,7 +88,7 @@ class _HistoryCleaner:
             await _delete_history(bot, chat_id, message.message_id)
         finally:
             self._busy_chat_ids.discard(chat_id)
-        await handle_welcome(message, settings)
+        await handle_start(message, settings, services)
 
 
 async def _delete_history(bot: Bot, chat_id: int, newest_message_id: int) -> None:

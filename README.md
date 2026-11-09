@@ -72,7 +72,8 @@ Available to everyone:
 
 | Command           | Action                               |
 |-------------------|--------------------------------------|
-| `/start`, `/help` | Show help.                           |
+| `/start`          | Show help. Admins get the control panel in a private chat. |
+| `/help`           | Show help.                           |
 | `/me`             | Show your numeric ID.                |
 | `/id`             | Show the `chat_id` of the current chat. |
 | `/clear`          | Clear up to 1000 recent messages in your chat with the bot. |
@@ -86,6 +87,9 @@ Admins only, in a private chat with the bot:
 | `/delgroup <project\|chat_id>`                 | Remove a group from the list.         |
 | `/reload`                                     | Sync the list with Telegram, show it. |
 | `/status`                                     | Uptime, group and member counts.      |
+
+The control panel shows groups, their members and the bot's status. Its buttons change one
+message in place instead of adding new ones.
 
 The bot description and command menus are set at startup.
 

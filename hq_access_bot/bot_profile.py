@@ -33,7 +33,7 @@ _USER_COMMANDS = [
 ]
 
 _ADMIN_COMMANDS = [
-    BotCommand(command="start", description="Справка администратора"),
+    BotCommand(command="start", description="Панель управления"),
     BotCommand(command="status", description="Статус и счётчики"),
     BotCommand(command="reload", description="Показать списки доступа"),
     BotCommand(command="add", description="Добавить участников в проект"),
