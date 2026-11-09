@@ -1,6 +1,9 @@
+from types import SimpleNamespace
+
 import pytest
 from aiogram.methods import ApproveChatJoinRequest, DeclineChatJoinRequest, SendMessage
 
+from hq_access_bot import telegram_retry
 from tests.support import (
     ADMIN_ID,
     ALICE_RECORD,
@@ -197,7 +200,11 @@ async def test_retries_stop_after_the_attempt_limit(alpha):
     assert "Заявка не обработана" in alpha.admin_notices()[0]
 
 
-async def test_long_rate_limit_is_not_waited_out(alpha):
+async def test_long_rate_limit_is_not_waited_out(alpha, monkeypatch):
+    async def skip_the_wait(seconds):
+        return None
+
+    monkeypatch.setattr(telegram_retry, "asyncio", SimpleNamespace(sleep=skip_the_wait))
     alpha.session.script_errors(ApproveChatJoinRequest, retry_after(3600))
 
     await alpha.feed(join_request(make_user(10, "alice")))
