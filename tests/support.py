@@ -1,0 +1,179 @@
+"""Shared test tools: a fake Telegram network and builders for incoming updates."""
+
+from collections.abc import AsyncGenerator
+from typing import Any
+
+from aiogram import Bot
+from aiogram.client.session.base import BaseSession
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.methods import GetChatMember, GetMe, TelegramMethod
+from aiogram.types import ChatMemberLeft, ChatMemberMember, User
+
+ADMIN_ID = 111
+BOT_ID = 123456
+GROUP_ID = -1001
+GROUP_KEY = str(GROUP_ID)
+ALICE_RECORD = {"id": 10, "username": "alice", "in": True, "name": "Alice"}
+FAKE_TOKEN = f"{BOT_ID}:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+_ADMIN_RIGHTS = dict.fromkeys(
+    (
+        "can_be_edited",
+        "is_anonymous",
+        "can_manage_chat",
+        "can_delete_messages",
+        "can_manage_video_chats",
+        "can_restrict_members",
+        "can_promote_members",
+        "can_change_info",
+        "can_invite_users",
+        "can_post_stories",
+        "can_edit_stories",
+        "can_delete_stories",
+    ),
+    False,
+)
+
+
+_RESTRICTIONS = {
+    "until_date": 0,
+    **dict.fromkeys(
+        (
+            "is_member",
+            "can_send_messages",
+            "can_send_audios",
+            "can_send_documents",
+            "can_send_photos",
+            "can_send_videos",
+            "can_send_video_notes",
+            "can_send_voice_notes",
+            "can_send_polls",
+            "can_send_other_messages",
+            "can_add_web_page_previews",
+            "can_react_to_messages",
+            "can_edit_tag",
+            "can_change_info",
+            "can_invite_users",
+            "can_pin_messages",
+            "can_manage_topics",
+        ),
+        False,
+    ),
+}
+
+
+class RecordingSession(BaseSession):
+    """Records Bot API calls instead of going to the network."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[TelegramMethod[Any]] = []
+        self.failing_methods: set[type[TelegramMethod[Any]]] = set()
+        self.chat_members: dict[int, tuple[str, str | None]] = {}
+
+    async def close(self) -> None:
+        return None
+
+    async def stream_content(self, *args: Any, **kwargs: Any) -> AsyncGenerator[bytes, None]:
+        yield b""
+
+    async def make_request(
+        self, bot: Bot, method: TelegramMethod[Any], timeout: int | None = None
+    ) -> Any:
+        if isinstance(method, GetMe):
+            return User(id=BOT_ID, is_bot=True, first_name="bot", username="test_bot")
+        self.calls.append(method)
+        if type(method) in self.failing_methods:
+            raise TelegramBadRequest(method=method, message="forced failure")
+        if isinstance(method, GetChatMember):
+            return self._chat_member(method)
+        return True
+
+    def _chat_member(self, method: GetChatMember) -> ChatMemberMember | ChatMemberLeft:
+        if method.user_id not in self.chat_members:
+            raise TelegramBadRequest(method=method, message="user not found")
+        status, username = self.chat_members[method.user_id]
+        user = User(id=method.user_id, is_bot=False, first_name="Seen", username=username)
+        return ChatMemberMember(user=user) if status == "member" else ChatMemberLeft(user=user)
+
+
+def make_user(user_id: int, username: str | None = None, first_name: str = "User") -> dict:
+    user = {"id": user_id, "is_bot": False, "first_name": first_name}
+    return {**user, "username": username} if username else user
+
+
+BOT_USER = make_user(BOT_ID, "test_bot")
+STRANGER = make_user(99, "bob", "Bob")
+
+
+def private_chat(user_id: int) -> dict:
+    return {"id": user_id, "type": "private", "first_name": "chat"}
+
+
+def supergroup(chat_id: int = GROUP_ID, title: str = "Alpha") -> dict:
+    return {"id": chat_id, "type": "supergroup", "title": title}
+
+
+def basic_group(title: str = "Basic") -> dict:
+    return {"id": -55, "type": "group", "title": title}
+
+
+def channel() -> dict:
+    return {"id": -1007, "type": "channel", "title": "News"}
+
+
+def join_request(user: dict, chat: dict | None = None) -> dict:
+    return {
+        "chat_join_request": {
+            "chat": chat or supergroup(),
+            "from": user,
+            "user_chat_id": user["id"],
+            "date": 1,
+        }
+    }
+
+
+def _member_state(status: str, user: dict) -> dict:
+    state: dict[str, Any] = {"status": status, "user": user}
+    if status == "kicked":
+        state["until_date"] = 0
+    if status == "administrator":
+        state.update(_ADMIN_RIGHTS)
+    if status == "restricted":
+        state.update(_RESTRICTIONS)
+    return state
+
+
+def _status_change(kind: str, old: str, new: str, user: dict, chat: dict | None) -> dict:
+    return {
+        kind: {
+            "chat": chat or supergroup(),
+            "from": make_user(ADMIN_ID),
+            "date": 1,
+            "old_chat_member": _member_state(old, user),
+            "new_chat_member": _member_state(new, user),
+        }
+    }
+
+
+def member_change(old: str, new: str, user: dict, chat: dict | None = None) -> dict:
+    return _status_change("chat_member", old, new, user, chat)
+
+
+def bot_change(old: str, new: str, chat: dict | None = None) -> dict:
+    return _status_change("my_chat_member", old, new, BOT_USER, chat)
+
+
+def command(
+    text: str, sender: dict | None = None, chat: dict | None = None, message_id: int = 7
+) -> dict:
+    sender = sender or make_user(ADMIN_ID, "root")
+    return {
+        "message": {
+            "message_id": message_id,
+            "date": 1,
+            "chat": chat or private_chat(sender["id"]),
+            "from": sender,
+            "text": text,
+        }
+    }

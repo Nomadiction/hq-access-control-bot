@@ -1,0 +1,15 @@
+# Secrets
+.env
+*.pem
+
+# Runtime bot data: access list and audit log
+data/
+
+# Environments and caches
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
