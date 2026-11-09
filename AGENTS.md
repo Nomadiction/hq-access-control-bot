@@ -22,8 +22,9 @@ pytest -q
 
 ## Layout rules
 
-- `hq_access_bot/whitelist/` imports nothing from aiogram. Telegram types stop in
-  `hq_access_bot/handlers/` and are converted by `telegram_mapping.py`.
+- `hq_access_bot/whitelist/` imports nothing from aiogram. Telegram types stay in
+  `hq_access_bot/handlers/` and the modules that talk to Telegram (`notifier.py`,
+  `history_cleaner.py`, `telegram_retry.py`), and are converted by `telegram_mapping.py`.
 - Every change to the access list goes through `WhitelistStore.transaction()`. Make network calls
   after the block exits, because the lock is held inside it.
 - Messages shown to Telegram users live in `hq_access_bot/texts.py` and `bot_profile.py` and are in

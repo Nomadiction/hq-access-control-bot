@@ -111,8 +111,8 @@ class Group:
         self.project = project
         return is_new_name
 
-    def has_member(self, person: Person) -> bool:
-        return self._find_member(person) is not None
+    def has_member(self, ref: MemberRef) -> bool:
+        return any(member.matches(ref) for member in self._members)
 
     def needs_confirmation(self, person: Person) -> bool:
         member = self._find_member(person)
@@ -128,7 +128,7 @@ class Group:
     def add_all(self, refs: Iterable[MemberRef]) -> MemberChange:
         added, skipped = [], []
         for ref in refs:
-            if any(m.matches(ref) for m in self._members):
+            if self.has_member(ref):
                 skipped.append(ref.label)
             else:
                 self._members.append(Member(user_id=ref.user_id, username=ref.username))

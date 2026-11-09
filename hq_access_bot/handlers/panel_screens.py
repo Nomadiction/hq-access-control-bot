@@ -6,12 +6,16 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from math import ceil
 
-from aiogram.enums import ButtonStyle
 from aiogram.filters.callback_data import CallbackData
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from hq_access_bot import texts
+from hq_access_bot.handlers.buttons import (
+    callback_button,
+    confirmation_keyboard,
+    single_row_keyboard,
+)
 from hq_access_bot.whitelist.models import Group, Member, Whitelist
 
 _GROUPS_PER_PAGE = 10
@@ -88,10 +92,10 @@ def build_home_screen(whitelist: Whitelist) -> Screen:
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                _button(texts.BUTTON_GROUPS, GroupsButton()),
-                _button(texts.BUTTON_STATUS, StatusButton()),
+                callback_button(texts.BUTTON_GROUPS, GroupsButton()),
+                callback_button(texts.BUTTON_STATUS, StatusButton()),
             ],
-            [_button(texts.BUTTON_CLEAR_CHAT, ClearChatButton())],
+            [callback_button(texts.BUTTON_CLEAR_CHAT, ClearChatButton())],
         ]
     )
     return Screen(texts.format_panel_home(whitelist), keyboard)
@@ -119,8 +123,8 @@ def build_groups_screen(whitelist: Whitelist, page: int, notice: str | None = No
         builder.button(text=texts.format_group_button(group), callback_data=data)
     builder.adjust(_GROUP_BUTTONS_PER_ROW)
     builder.row(*_build_page_buttons(page, page_count, lambda p: GroupsButton(page=p)))
-    builder.row(_button(texts.BUTTON_SYNC, SyncButton(page=page)))
-    builder.row(_button(texts.BUTTON_BACK, HomeButton()))
+    builder.row(callback_button(texts.BUTTON_SYNC, SyncButton(page=page)))
+    builder.row(callback_button(texts.BUTTON_BACK, HomeButton()))
     return Screen(texts.format_groups_title(page, page_count, notice), builder.as_markup())
 
 
@@ -136,15 +140,17 @@ def build_group_screen(chat_key: str, group: Group, page: int, list_page: int) -
         )
     )
     builder.row(
-        _button(texts.BUTTON_ADD, AddMembersButton(chat_key=chat_key, list_page=list_page)),
-        _button(texts.BUTTON_REMOVE, RemoveListButton(chat_key=chat_key, list_page=list_page)),
+        callback_button(texts.BUTTON_ADD, AddMembersButton(chat_key=chat_key, list_page=list_page)),
+        callback_button(
+            texts.BUTTON_REMOVE, RemoveListButton(chat_key=chat_key, list_page=list_page)
+        ),
     )
     builder.row(
-        _button(
+        callback_button(
             texts.BUTTON_DELETE_GROUP, AskDeleteGroupButton(chat_key=chat_key, list_page=list_page)
         )
     )
-    builder.row(_button(texts.BUTTON_BACK, GroupsButton(page=list_page)))
+    builder.row(callback_button(texts.BUTTON_BACK, GroupsButton(page=list_page)))
     return Screen(pages[page], builder.as_markup())
 
 
@@ -152,22 +158,18 @@ def build_add_prompt_screen(
     chat_key: str, group: Group, list_page: int, error: str | None = None
 ) -> Screen:
     cancel = GroupButton(chat_key=chat_key, list_page=list_page)
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[_button(texts.BUTTON_CANCEL, cancel)]])
+    keyboard = single_row_keyboard(callback_button(texts.BUTTON_CANCEL, cancel))
     return Screen(texts.format_add_prompt(group, error), keyboard)
 
 
 def build_add_result_screen(chat_key: str, report: str, list_page: int) -> Screen:
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                _button(
-                    texts.BUTTON_ADD_MORE, AddMembersButton(chat_key=chat_key, list_page=list_page)
-                ),
-                _button(
-                    texts.BUTTON_BACK_TO_GROUP, GroupButton(chat_key=chat_key, list_page=list_page)
-                ),
-            ]
-        ]
+    keyboard = single_row_keyboard(
+        callback_button(
+            texts.BUTTON_ADD_MORE, AddMembersButton(chat_key=chat_key, list_page=list_page)
+        ),
+        callback_button(
+            texts.BUTTON_BACK_TO_GROUP, GroupButton(chat_key=chat_key, list_page=list_page)
+        ),
     )
     return Screen(report, keyboard)
 
@@ -179,7 +181,7 @@ def build_remove_screen(chat_key: str, group: Group, page: int, list_page: int) 
         data = RemoveMemberButton(
             chat_key=chat_key, member_tag=_member_tag(member), page=page, list_page=list_page
         )
-        builder.row(_button(texts.format_member_button(member), data))
+        builder.row(callback_button(texts.format_member_button(member), data))
     builder.row(
         *_build_page_buttons(
             page,
@@ -187,19 +189,16 @@ def build_remove_screen(chat_key: str, group: Group, page: int, list_page: int) 
             lambda p: RemoveListButton(chat_key=chat_key, page=p, list_page=list_page),
         )
     )
-    builder.row(_button(texts.BUTTON_BACK, GroupButton(chat_key=chat_key, list_page=list_page)))
+    builder.row(
+        callback_button(texts.BUTTON_BACK, GroupButton(chat_key=chat_key, list_page=list_page))
+    )
     return Screen(texts.format_remove_title(group, page, page_count), builder.as_markup())
 
 
 def build_delete_confirmation_screen(chat_key: str, group: Group, list_page: int) -> Screen:
-    confirm = ConfirmDeleteGroupButton(chat_key=chat_key, list_page=list_page)
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                _button(texts.BUTTON_CONFIRM_DELETE, confirm, ButtonStyle.DANGER),
-                _button(texts.BUTTON_CANCEL, GroupButton(chat_key=chat_key, list_page=list_page)),
-            ]
-        ]
+    keyboard = confirmation_keyboard(
+        ConfirmDeleteGroupButton(chat_key=chat_key, list_page=list_page),
+        GroupButton(chat_key=chat_key, list_page=list_page),
     )
     return Screen(texts.format_delete_confirmation(group), keyboard)
 
@@ -222,17 +221,11 @@ def _build_page_buttons(
 ) -> list[InlineKeyboardButton]:
     buttons = []
     if page > 0:
-        buttons.append(_button(texts.BUTTON_PREVIOUS_PAGE, open_page(page - 1)))
+        buttons.append(callback_button(texts.BUTTON_PREVIOUS_PAGE, open_page(page - 1)))
     if page < page_count - 1:
-        buttons.append(_button(texts.BUTTON_NEXT_PAGE, open_page(page + 1)))
+        buttons.append(callback_button(texts.BUTTON_NEXT_PAGE, open_page(page + 1)))
     return buttons
 
 
 def _back_keyboard(destination: CallbackData) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[_button(texts.BUTTON_BACK, destination)]])
-
-
-def _button(
-    text: str, data: CallbackData, style: ButtonStyle | None = None
-) -> InlineKeyboardButton:
-    return InlineKeyboardButton(text=text, callback_data=data.pack(), style=style)
+    return InlineKeyboardMarkup(inline_keyboard=[[callback_button(texts.BUTTON_BACK, destination)]])

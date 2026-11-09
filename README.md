@@ -22,7 +22,8 @@ A group that is not in the list declines everyone.
 - Python 3.12 or newer.
 - A bot created with [@BotFather](https://t.me/BotFather).
 - Supergroups only: basic groups have no join requests.
-- In every group the bot must be an administrator with the right to invite users. Without
+- In every group the bot must be an administrator with the rights to invite users and to ban
+  them (the second is needed only for the button that removes a person). Without
   admin rights Telegram does not send the bot join requests or membership changes.
 
 ## Getting started
@@ -91,6 +92,11 @@ Admins only, in a private chat with the bot:
 The control panel does the same work with buttons: it shows groups, members and the bot's status,
 adds and removes members, deletes a group after a confirmation, syncs the list with Telegram and
 clears the chat. Its buttons change one message in place instead of adding new ones.
+
+Notices carry buttons too: add a person who was declined or entered without a request, remove
+them from the group (the bot needs the right to ban members), decide a request Telegram refused,
+or forget the list of a group the bot was removed from. A press removes the buttons and writes the
+outcome under the notice.
 
 The bot description and command menus are set at startup.
 

@@ -259,11 +259,17 @@ def member_change(old: str, new: str, user: dict, chat: dict | None = None) -> d
 
 
 def bot_change(
-    old: str, new: str, chat: dict | None = None, *, can_invite_users: bool = True
+    old: str,
+    new: str,
+    chat: dict | None = None,
+    *,
+    can_invite_users: bool = True,
+    can_restrict_members: bool = True,
 ) -> dict:
     update = _build_status_change("my_chat_member", old, new, BOT_USER, chat)
     if new == "administrator":
         update["my_chat_member"]["new_chat_member"]["can_invite_users"] = can_invite_users
+        update["my_chat_member"]["new_chat_member"]["can_restrict_members"] = can_restrict_members
     return update
 
 

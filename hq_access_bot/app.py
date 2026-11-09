@@ -27,8 +27,10 @@ from hq_access_bot.handlers import (
     bot_membership,
     chat_membership,
     join_requests,
+    notice_actions,
     public_commands,
 )
+from hq_access_bot.handlers.buttons import build_stale_button_router
 from hq_access_bot.history_cleaner import HistoryCleaner
 from hq_access_bot.instance_lock import hold_instance_lock
 from hq_access_bot.notifier import Notifier
@@ -121,7 +123,9 @@ def build_dispatcher(settings: Settings, services: Services) -> Dispatcher:
         bot_membership.build_router(),
         public_commands.build_router(),
         admin_commands.build_router(),
+        notice_actions.build_router(),
         admin_panel.build_router(),
+        build_stale_button_router(),
     )
     dispatcher.errors.register(_report_update_error)
     return dispatcher

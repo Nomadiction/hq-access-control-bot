@@ -4,11 +4,19 @@ import logging
 from collections.abc import Awaitable, Callable
 
 from aiogram import Router
-from aiogram.exceptions import AiogramError, TelegramBadRequest
-from aiogram.types import ChatJoinRequest
+from aiogram.exceptions import AiogramError
+from aiogram.types import ChatJoinRequest, InlineKeyboardMarkup
 
 from hq_access_bot import texts
-from hq_access_bot.handlers.telegram_mapping import build_chat_key, build_person
+from hq_access_bot.handlers.notice_keyboards import (
+    build_declined_request_keyboard,
+    build_undecided_request_keyboard,
+)
+from hq_access_bot.handlers.telegram_mapping import (
+    build_chat_key,
+    build_person,
+    is_request_already_resolved,
+)
 from hq_access_bot.services import Services
 from hq_access_bot.telegram_retry import call_with_retry
 from hq_access_bot.whitelist.identity import Person
@@ -16,9 +24,6 @@ from hq_access_bot.whitelist.models import Group
 from hq_access_bot.whitelist.store import WhitelistCorruptedError
 
 logger = logging.getLogger(__name__)
-
-# Telegram's error codes for a request that an admin or an earlier attempt already resolved.
-_ALREADY_RESOLVED_ERRORS = ("HIDE_REQUESTER_MISSING", "USER_ALREADY_PARTICIPANT")
 
 
 def build_router() -> Router:
@@ -34,17 +39,19 @@ async def handle_join_request(event: ChatJoinRequest, services: Services) -> Non
     bot only through user_chat_id, for 5 minutes and while the request is still open.
     """
     person = build_person(event.from_user)
+    chat_key = build_chat_key(event.chat)
     try:
-        group = services.whitelist_store.read().groups.get(build_chat_key(event.chat))
+        group = services.whitelist_store.read().groups.get(chat_key)
     except WhitelistCorruptedError:
         await _report_undecided_request(event, person, texts.UNKNOWN_PROJECT, services)
         raise
 
-    if group is not None and group.has_member(person):
+    if group is not None and group.has_member(person.ref):
         await _approve(event, person, group, services)
     else:
         project = group.project if group else texts.UNKNOWN_PROJECT
-        await _decline(event, person, project, services)
+        keyboard = build_declined_request_keyboard(chat_key, person.user_id) if group else None
+        await _decline(event, person, project, services, keyboard)
 
 
 async def _approve(
@@ -64,13 +71,19 @@ async def _approve(
 
 
 async def _decline(
-    event: ChatJoinRequest, person: Person, project: str, services: Services
+    event: ChatJoinRequest,
+    person: Person,
+    project: str,
+    services: Services,
+    keyboard: InlineKeyboardMarkup | None,
 ) -> None:
     await services.notifier.send_direct_message(event.user_chat_id, texts.DECLINED_DIRECT_MESSAGE)
     if not await _apply_decision(event.decline, event, person, project, services):
         return
     services.audit_log.record_request_declined(person, project)
-    await services.notifier.notify_admins(texts.format_request_declined_notice(project, person))
+    await services.notifier.notify_admins(
+        texts.format_request_declined_notice(project, person), keyboard
+    )
 
 
 async def _apply_decision(
@@ -90,16 +103,10 @@ async def _apply_decision(
         await call_with_retry(decide)
     except AiogramError as error:
         logger.warning("Decision on request of user %s failed: %s", person.user_id, error)
-        if not _is_already_resolved(error):
+        if not is_request_already_resolved(error):
             await _report_undecided_request(event, person, project, services)
         return False
     return True
-
-
-def _is_already_resolved(error: AiogramError) -> bool:
-    return isinstance(error, TelegramBadRequest) and any(
-        code in error.message.upper() for code in _ALREADY_RESOLVED_ERRORS
-    )
 
 
 async def _report_undecided_request(
@@ -109,4 +116,7 @@ async def _report_undecided_request(
     await services.notifier.send_direct_message(
         event.user_chat_id, texts.REQUEST_FAILED_DIRECT_MESSAGE
     )
-    await services.notifier.notify_admins(texts.format_request_failed_notice(project, person))
+    await services.notifier.notify_admins(
+        texts.format_request_failed_notice(project, person),
+        build_undecided_request_keyboard(build_chat_key(event.chat), person.user_id),
+    )

@@ -1,7 +1,7 @@
 """The admin panel: button presses and the text typed in answer to them."""
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any
 
 from aiogram import Bot, F, Router
@@ -12,13 +12,19 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
 from hq_access_bot import texts
-from hq_access_bot.config import Settings
 from hq_access_bot.handlers.access_list_changes import (
     ADD_MEMBERS,
     REMOVE_MEMBERS,
     apply_member_operation,
     delete_group,
     sync_with_telegram,
+)
+from hq_access_bot.handlers.buttons import (
+    NextHandler,
+    acknowledge,
+    edit_ignoring_no_change,
+    is_not_modified,
+    stop_spinner_on_failure,
 )
 from hq_access_bot.handlers.command_args import parse_members
 from hq_access_bot.handlers.panel_screens import (
@@ -45,7 +51,7 @@ from hq_access_bot.handlers.panel_screens import (
     find_member_by_tag,
 )
 from hq_access_bot.handlers.telegram_mapping import (
-    is_admin_in_private_chat,
+    is_admin_button_in_private_chat,
     is_admin_message_in_private_chat,
 )
 from hq_access_bot.services import Services
@@ -53,11 +59,6 @@ from hq_access_bot.whitelist.identity import MemberRef
 from hq_access_bot.whitelist.models import Group
 
 logger = logging.getLogger(__name__)
-
-# Telegram refuses an edit that changes nothing, which is what a repeated press asks for.
-_NOT_MODIFIED_ERROR = "message is not modified"
-
-_NextHandler = Callable[[CallbackQuery, dict[str, Any]], Awaitable[Any]]
 
 
 class _PendingInput(StatesGroup):
@@ -79,10 +80,10 @@ class _SyncButtonHandler:
         state: FSMContext,
     ) -> None:
         if self._is_running:
-            await _acknowledge(callback, texts.SYNC_BUSY_NOTICE)
+            await acknowledge(callback, texts.SYNC_BUSY_NOTICE)
             return
         self._is_running = True
-        await _acknowledge(callback, texts.SYNC_STARTED_NOTICE)
+        await acknowledge(callback, texts.SYNC_STARTED_NOTICE)
         try:
             whitelist = await sync_with_telegram(bot, services)
         finally:
@@ -94,16 +95,9 @@ class _SyncButtonHandler:
 
 
 def build_router() -> Router:
-    """A press that no handler takes still needs an answer, or the button keeps spinning."""
     router = Router(name=__name__)
-    router.include_routers(_build_panel_router(), _build_fallback_router())
-    return router
-
-
-def _build_panel_router() -> Router:
-    router = Router(name="admin_panel_updates")
-    router.callback_query.filter(_is_admin_button_in_private_chat)
-    router.callback_query.middleware(_stop_spinner_on_failure)
+    router.callback_query.filter(is_admin_button_in_private_chat)
+    router.callback_query.middleware(stop_spinner_on_failure)
     router.callback_query.middleware(_forget_pending_input)
     router.callback_query.register(handle_open_home, HomeButton.filter())
     router.callback_query.register(handle_open_status, StatusButton.filter())
@@ -124,12 +118,6 @@ def _build_panel_router() -> Router:
     return router
 
 
-def _build_fallback_router() -> Router:
-    router = Router(name="stale_buttons")
-    router.callback_query.register(handle_stale_button)
-    return router
-
-
 async def handle_open_home(callback: CallbackQuery, services: Services) -> None:
     await _show(callback, build_home_screen(services.whitelist_store.read()))
 
@@ -146,7 +134,7 @@ async def handle_clear_chat(callback: CallbackQuery, bot: Bot, services: Service
     chat_id = callback.message.chat.id
 
     async def send_marker() -> int:
-        await _acknowledge(callback)
+        await acknowledge(callback)
         marker = await bot.send_message(chat_id, texts.CLEARING_NOTICE)
         return marker.message_id
 
@@ -154,7 +142,7 @@ async def handle_clear_chat(callback: CallbackQuery, bot: Bot, services: Service
         screen = build_home_screen(services.whitelist_store.read())
         await bot.send_message(chat_id, screen.text, reply_markup=screen.keyboard)
     else:
-        await _acknowledge(callback, texts.CLEANUP_BUSY_NOTICE)
+        await acknowledge(callback, texts.CLEANUP_BUSY_NOTICE)
 
 
 async def handle_open_groups(
@@ -262,7 +250,7 @@ async def handle_members_input(
         screen = await _take_typed_members(message.text, pending, state, services)
     except Exception:
         await _resume_waiting(state, pending)
-        await services.notifier.send_direct_message(message.chat.id, texts.PANEL_FAILURE_NOTICE)
+        await services.notifier.send_direct_message(message.chat.id, texts.BUTTON_FAILURE_NOTICE)
         raise
     await _delete_quietly(message)
     await _edit_panel(message, bot, pending["panel_message_id"], screen)
@@ -270,10 +258,6 @@ async def handle_members_input(
 
 async def handle_unexpected_text(message: Message) -> None:
     await message.answer(texts.NOT_WAITING_FOR_INPUT)
-
-
-async def handle_stale_button(callback: CallbackQuery) -> None:
-    await _acknowledge(callback, texts.STALE_BUTTON_NOTICE)
 
 
 async def _take_typed_members(
@@ -306,25 +290,8 @@ def _describe_input_problem(refs: list[MemberRef], invalid: list[str]) -> str | 
     return None if refs else texts.MEMBERS_INPUT_EMPTY
 
 
-async def _is_admin_button_in_private_chat(callback: CallbackQuery, settings: Settings) -> bool:
-    message = callback.message
-    return isinstance(message, Message) and is_admin_in_private_chat(
-        message.chat, callback.from_user, settings.admin_ids
-    )
-
-
-async def _stop_spinner_on_failure(
-    handler: _NextHandler, callback: CallbackQuery, data: dict[str, Any]
-) -> Any:
-    try:
-        return await handler(callback, data)
-    except Exception:
-        await _acknowledge(callback, texts.PANEL_FAILURE_NOTICE)
-        raise
-
-
 async def _forget_pending_input(
-    handler: _NextHandler, callback: CallbackQuery, data: dict[str, Any]
+    handler: NextHandler, callback: CallbackQuery, data: dict[str, Any]
 ) -> Any:
     """Any press leaves the screen that was asking for typed input."""
     await data["state"].clear()
@@ -353,16 +320,14 @@ async def _show_for_group(
 
 
 async def _show(callback: CallbackQuery, screen: Screen, notice: str | None = None) -> None:
-    await _acknowledge(callback, notice)
+    await acknowledge(callback, notice)
     await _edit(callback, screen)
 
 
 async def _edit(callback: CallbackQuery, screen: Screen) -> None:
-    try:
-        await callback.message.edit_text(screen.text, reply_markup=screen.keyboard)
-    except TelegramBadRequest as error:
-        if not _is_not_modified(error):
-            raise
+    await edit_ignoring_no_change(
+        callback.message.edit_text(screen.text, reply_markup=screen.keyboard)
+    )
 
 
 async def _edit_panel(message: Message, bot: Bot, panel_message_id: int, screen: Screen) -> None:
@@ -375,12 +340,8 @@ async def _edit_panel(message: Message, bot: Bot, panel_message_id: int, screen:
             reply_markup=screen.keyboard,
         )
     except TelegramBadRequest as error:
-        if not _is_not_modified(error):
+        if not is_not_modified(error):
             await message.answer(screen.text, reply_markup=screen.keyboard)
-
-
-def _is_not_modified(error: TelegramBadRequest) -> bool:
-    return _NOT_MODIFIED_ERROR in error.message
 
 
 async def _delete_quietly(message: Message) -> None:
@@ -388,11 +349,3 @@ async def _delete_quietly(message: Message) -> None:
         await message.delete()
     except AiogramError as error:
         logger.warning("Could not delete the admin's message: %s", error)
-
-
-async def _acknowledge(callback: CallbackQuery, notice: str | None = None) -> None:
-    """Stop the button's spinner. A press answered too late must still take effect."""
-    try:
-        await callback.answer(notice)
-    except AiogramError as error:
-        logger.warning("Button press was not acknowledged: %s", error)

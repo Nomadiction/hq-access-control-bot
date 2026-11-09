@@ -1,7 +1,8 @@
 """Translation of Telegram types and statuses into domain concepts."""
 
 from aiogram.enums import ChatMemberStatus, ChatType
-from aiogram.types import Chat, ChatMember, ChatMemberRestricted, Message, User
+from aiogram.exceptions import AiogramError, TelegramBadRequest
+from aiogram.types import CallbackQuery, Chat, ChatMember, ChatMemberRestricted, Message, User
 
 from hq_access_bot.config import Settings
 from hq_access_bot.whitelist.identity import Person
@@ -11,6 +12,15 @@ PRESENT_STATUSES = frozenset(
     {ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
 )
 
+# Telegram's error codes for a request that an admin or an earlier attempt already resolved.
+_ALREADY_RESOLVED_ERRORS = ("HIDE_REQUESTER_MISSING", "USER_ALREADY_PARTICIPANT")
+
+
+def is_request_already_resolved(error: AiogramError) -> bool:
+    return isinstance(error, TelegramBadRequest) and any(
+        code in error.message.upper() for code in _ALREADY_RESOLVED_ERRORS
+    )
+
 
 def is_admin_in_private_chat(chat: Chat, user: User, admin_ids: frozenset[int]) -> bool:
     """Admin tools show member lists, so they stay out of group chats."""
@@ -19,6 +29,13 @@ def is_admin_in_private_chat(chat: Chat, user: User, admin_ids: frozenset[int]) 
 
 async def is_admin_message_in_private_chat(message: Message, settings: Settings) -> bool:
     return is_admin_in_private_chat(message.chat, message.from_user, settings.admin_ids)
+
+
+async def is_admin_button_in_private_chat(callback: CallbackQuery, settings: Settings) -> bool:
+    message = callback.message
+    return isinstance(message, Message) and is_admin_in_private_chat(
+        message.chat, callback.from_user, settings.admin_ids
+    )
 
 
 def is_present_in_chat(chat_member: ChatMember) -> bool:

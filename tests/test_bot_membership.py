@@ -28,7 +28,6 @@ async def test_removed_bot_keeps_the_list_as_inactive(alpha, status):
         "inactive": True,
     }
     assert "Бот удалён" in alpha.admin_notices()[0]
-    assert f"/delgroup {GROUP_KEY}" in alpha.admin_notices()[0]
     assert alpha.audit_events() == [f"GROUP-INACTIVE {GROUP_KEY} «Alpha»"]
 
 
@@ -123,6 +122,7 @@ async def test_channel_is_not_treated_as_a_group(alpha):
         bot_change("left", "administrator", supergroup(-1003, "New"), can_invite_users=False),
         bot_change("member", "administrator", can_invite_users=False),
         bot_change("administrator", "administrator", can_invite_users=False),
+        bot_change("member", "administrator", can_restrict_members=False),
     ],
 )
 async def test_missing_invite_right_is_reported(alpha, update):

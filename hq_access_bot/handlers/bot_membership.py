@@ -5,6 +5,7 @@ from aiogram.enums import ChatMemberStatus, ChatType
 from aiogram.types import ChatMemberAdministrator, ChatMemberUpdated, Message
 
 from hq_access_bot import texts
+from hq_access_bot.handlers.notice_keyboards import build_removed_bot_keyboard
 from hq_access_bot.handlers.telegram_mapping import (
     DEPARTED_STATUSES,
     PRESENT_STATUSES,
@@ -59,7 +60,9 @@ async def _deactivate_group(event: ChatMemberUpdated, services: Services) -> Non
     if was_active:
         title = build_project_name(event.chat.title, event.chat)
         services.audit_log.record_group_deactivated(chat_key, title)
-        await services.notifier.notify_admins(texts.format_bot_removed_notice(title, chat_key))
+        await services.notifier.notify_admins(
+            texts.format_bot_removed_notice(title), build_removed_bot_keyboard(chat_key)
+        )
 
 
 async def _track_supergroup(event: ChatMemberUpdated, services: Services) -> None:
@@ -77,7 +80,7 @@ async def _track_supergroup(event: ChatMemberUpdated, services: Services) -> Non
         await services.notifier.notify_admins(texts.format_bot_promoted_notice(title))
     elif _is_demotion(event):
         await services.notifier.notify_admins(texts.format_bot_demoted_notice(title))
-    if not _can_process_join_requests(event) and not _is_demotion(event):
+    if not _has_required_rights(event) and not _is_demotion(event):
         await services.notifier.notify_admins(texts.format_missing_rights_notice(title))
 
 
@@ -95,6 +98,10 @@ def _is_demotion(event: ChatMemberUpdated) -> bool:
     )
 
 
-def _can_process_join_requests(event: ChatMemberUpdated) -> bool:
+def _has_required_rights(event: ChatMemberUpdated) -> bool:
     bot_member = event.new_chat_member
-    return isinstance(bot_member, ChatMemberAdministrator) and bot_member.can_invite_users
+    return (
+        isinstance(bot_member, ChatMemberAdministrator)
+        and bot_member.can_invite_users
+        and bot_member.can_restrict_members
+    )

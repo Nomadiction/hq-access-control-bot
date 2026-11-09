@@ -3,9 +3,11 @@
 import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from enum import Enum, auto
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
+from aiogram.exceptions import AiogramError, TelegramAPIError, TelegramRetryAfter
+from aiogram.types import ChatMember
 
 from hq_access_bot import texts
 from hq_access_bot.audit_log import AuditLog
@@ -32,6 +34,12 @@ REMOVE_MEMBERS = MemberOperation(
 )
 
 
+class ForgetOutcome(Enum):
+    FORGOTTEN = auto()
+    ALREADY_GONE = auto()
+    BOT_RETURNED = auto()
+
+
 async def apply_member_operation(
     operation: MemberOperation, chat_key: str, refs: list[MemberRef], services: Services
 ) -> str | None:
@@ -56,6 +64,19 @@ async def delete_group(chat_key: str, services: Services) -> Group | None:
     return group
 
 
+async def forget_inactive_group(chat_key: str, services: Services) -> ForgetOutcome:
+    """Delete the list of a group the bot is out of. It may have returned in the meantime."""
+    async with services.whitelist_store.transaction() as whitelist:
+        group = whitelist.groups.get(chat_key)
+        if group is None:
+            return ForgetOutcome.ALREADY_GONE
+        if group.is_active:
+            return ForgetOutcome.BOT_RETURNED
+        whitelist.remove_group(chat_key)
+    services.audit_log.record_group_deleted_by_admin(chat_key, group.project)
+    return ForgetOutcome.FORGOTTEN
+
+
 async def sync_with_telegram(bot: Bot, services: Services) -> Whitelist:
     """Check the list against Telegram, save the result and return it."""
     store = services.whitelist_store
@@ -63,6 +84,24 @@ async def sync_with_telegram(bot: Bot, services: Services) -> Whitelist:
     async with store.transaction() as whitelist:
         whitelist.reconcile(observed)
     return whitelist
+
+
+async def look_up_chat_member(bot: Bot, chat_key: str, user_id: int) -> ChatMember | None:
+    """Ask Telegram about a person. None means it did not answer."""
+    try:
+        return await bot.get_chat_member(int(chat_key), user_id)
+    except AiogramError as error:
+        logger.warning("Could not check member %s of chat %s: %s", user_id, chat_key, error)
+        return None
+
+
+async def confirm_member_in_chat(
+    chat_key: str, chat_member: ChatMember, services: Services
+) -> None:
+    """Record as joined a person who was listed after they had already entered the group."""
+    if is_present_in_chat(chat_member):
+        async with services.whitelist_store.transaction() as whitelist:
+            whitelist.confirm_member(chat_key, build_person(chat_member.user))
 
 
 async def _observe_all_members(

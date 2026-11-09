@@ -54,7 +54,6 @@ async def test_unlisted_user_joining_warns_admins_and_keeps_the_file(alpha):
 
     assert alpha.paths.whitelist.read_text(encoding="utf-8") == before
     assert "Вход без доступа" in alpha.admin_notices()[0]
-    assert f"/add {GROUP_KEY} 99" in alpha.admin_notices()[0]
     assert alpha.audit_events() == ["MEMBER-UNLISTED id=99 @bob project=Alpha"]
 
 

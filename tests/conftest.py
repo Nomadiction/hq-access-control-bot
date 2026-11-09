@@ -8,7 +8,12 @@ import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendMessage
+from aiogram.methods import (
+    AnswerCallbackQuery,
+    EditMessageReplyMarkup,
+    EditMessageText,
+    SendMessage,
+)
 from aiogram.types import InlineKeyboardButton
 
 from hq_access_bot import history_cleaner, telegram_retry
@@ -62,12 +67,12 @@ class BotHarness:
     def admin_notices(self) -> list[str]:
         return self.texts_sent_to(ADMIN_ID)
 
-    def current_screen(self) -> SendMessage | EditMessageText:
-        """The latest text the bot showed, sent as a new message or by editing one."""
+    def current_screen(self) -> SendMessage | EditMessageText | EditMessageReplyMarkup:
+        """The latest thing the bot showed: a new message or an edit of one."""
         return next(
             call
             for call in reversed(self.session.calls)
-            if isinstance(call, SendMessage | EditMessageText)
+            if isinstance(call, SendMessage | EditMessageText | EditMessageReplyMarkup)
         )
 
     def screen_buttons(self) -> list[InlineKeyboardButton]:
@@ -89,6 +94,9 @@ class BotHarness:
 
     def last_toast(self) -> str | None:
         return self.calls_of(AnswerCallbackQuery)[-1].text
+
+    def no_failure_alert(self) -> bool:
+        return not any("Сбой" in text for text in self.admin_notices())
 
     def audit_events(self) -> list[str]:
         if not self.paths.audit_log.exists():

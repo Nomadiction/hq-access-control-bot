@@ -50,10 +50,6 @@ async def start_adding(harness):
     await harness.press("Добавить")
 
 
-def no_failure_alert(harness):
-    return not any("Сбой" in text for text in harness.admin_notices())
-
-
 def member_names(harness, chat_key=GROUP_KEY):
     return [m.get("username") or m["id"] for m in harness.members_on_disk(chat_key)]
 
@@ -96,7 +92,7 @@ async def test_undeletable_message_does_not_stop_the_addition(panel):
 
     assert "newbie" in member_names(panel)
     assert "✅ Добавлено: @newbie" in panel.current_screen().text
-    assert no_failure_alert(panel)
+    assert panel.no_failure_alert()
 
 
 async def test_already_listed_members_are_reported(panel):
@@ -213,7 +209,7 @@ async def test_text_of_another_user_is_not_taken_as_members(panel):
 
     assert "newbie" not in member_names(panel)
     assert panel.calls_of(DeleteMessage) == []
-    assert no_failure_alert(panel)
+    assert panel.no_failure_alert()
 
 
 async def test_text_in_a_group_is_not_taken_as_members(panel):
@@ -246,7 +242,7 @@ async def test_result_is_sent_as_a_new_message_when_the_panel_is_gone(panel):
     await panel.feed(command("@newbie"))
 
     assert "✅ Добавлено: @newbie" in panel.calls_of(SendMessage)[-1].text
-    assert no_failure_alert(panel)
+    assert panel.no_failure_alert()
 
 
 async def test_repeating_the_same_error_is_not_a_failure(panel):
@@ -616,7 +612,7 @@ async def test_two_quick_messages_add_only_one_list(panel):
     await asyncio.gather(panel.feed(command("@first_name")), panel.feed(command("@second_name")))
 
     assert len({"first_name", "second_name"} & set(member_names(panel))) == 1
-    assert no_failure_alert(panel)
+    assert panel.no_failure_alert()
 
 
 async def test_press_during_typed_input_is_not_a_failure(panel):
@@ -627,7 +623,7 @@ async def test_press_during_typed_input_is_not_a_failure(panel):
         panel.feed(command("@newbie")), panel.feed(button_press(cancel.callback_data))
     )
 
-    assert no_failure_alert(panel)
+    assert panel.no_failure_alert()
 
 
 async def fail_to_write(self, whitelist):
@@ -697,7 +693,7 @@ async def test_photo_with_a_caption_is_not_taken_as_members(panel):
     await panel.feed(update)
 
     assert "newbie" not in member_names(panel)
-    assert no_failure_alert(panel)
+    assert panel.no_failure_alert()
 
 
 async def test_press_on_another_panel_ends_the_wait_and_text_gets_a_hint(panel):
@@ -805,4 +801,4 @@ async def test_sync_stops_at_a_rate_limit_and_leaves_the_rest_unchecked(harness)
 
     assert len(harness.calls_of(GetChatMember)) == 1
     assert harness.members_on_disk(GROUP_KEY) == members
-    assert no_failure_alert(harness)
+    assert harness.no_failure_alert()

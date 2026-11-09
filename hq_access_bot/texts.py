@@ -78,10 +78,16 @@ BUTTON_DELETE_GROUP = "🗑 Удалить группу"
 BUTTON_CONFIRM_DELETE = "Да, удалить"
 BUTTON_CANCEL = "Отмена"
 BUTTON_BACK_TO_GROUP = "← К группе"
+BUTTON_ADD_TO_LIST = "✅ В список"
+BUTTON_KICK = "🚫 Выгнать"
+BUTTON_ADD_DECLINED = "➕ Добавить в список"
+BUTTON_APPROVE = "✅ Одобрить"
+BUTTON_DECLINE = "⛔ Отклонить"
+BUTTON_FORGET_GROUP = "🗑 Удалить насовсем"
 
 STALE_BUTTON_NOTICE = "Эта кнопка больше не работает."
 GROUP_GONE_NOTICE = "Этой группы уже нет в списке."
-PANEL_FAILURE_NOTICE = "⚠️ Не получилось. Подробности в логе бота."
+BUTTON_FAILURE_NOTICE = "⚠️ Не получилось. Подробности в логе бота."
 MEMBER_GONE_NOTICE = "Этого участника уже нет в списке."
 GROUP_DELETED_NOTICE = "Группа удалена."
 SYNC_STARTED_NOTICE = "Проверяю участников…"
@@ -91,6 +97,24 @@ MEMBERS_INPUT_EMPTY = "⚠️ <b>Пришлите хотя бы один ник 
 NOT_WAITING_FOR_INPUT = "Сейчас бот ничего не ждёт. Панель управления: /start"
 CLEANUP_BUSY_NOTICE = "Очистка уже идёт."
 CLEARING_NOTICE = "🧹 Очищаю переписку…"
+ACTION_BUSY_NOTICE = "Уже выполняется."
+KICK_FAILED_NOTICE = "Не вышло: боту нужно право банить участников."
+DECISION_FAILED_NOTICE = "Telegram снова не принял решение. Попробуйте позже."
+FORGET_WARNING_NOTICE = "Список нельзя будет вернуть."
+
+APPLY_AGAIN_HINT = "<i>Человеку нужно подать заявку снова.</i>"
+ALREADY_LISTED_RESULT = "Человек уже в списке, исключать не стал."
+KICKED_RESULT = "🚫 Исключён из группы."
+APPROVED_RESULT = "✅ Одобрено вручную."
+DECLINED_RESULT = "⛔ Отклонено вручную."
+ALREADY_RESOLVED_RESULT = "Заявка уже решена."
+GROUP_FORGOTTEN_RESULT = "🗑 Список удалён."
+BOT_RETURNED_RESULT = "Бот уже вернулся в группу, список оставлен."
+KICKED_BUT_BANNED_RESULT = (
+    "⚠️ Человек исключён, но бан снять не удалось. "
+    "Снимите его в настройках группы, иначе человек не сможет вернуться."
+)
+PERSON_NOT_TOLD_HINT = "<i>Сообщить человеку не удалось.</i>"
 
 _MEMBERS_PER_CARD_PAGE = 25
 _MAX_LABELS_IN_REPORT = 40
@@ -138,15 +162,12 @@ def format_request_declined_notice(project: str, person: Person) -> str:
 def format_request_failed_notice(project: str, person: Person) -> str:
     heading = "⚠️ <b>Заявка не обработана</b>"
     notice = _format_request_notice(heading, project, person)
-    return f"{notice}\n<i>Telegram не принял решение. Обработайте заявку вручную.</i>"
+    return f"{notice}\n<i>Telegram не принял решение. Решите заявку кнопками.</i>"
 
 
-def format_unlisted_member_notice(project: str, person: Person, chat_key: str) -> str:
+def format_unlisted_member_notice(project: str, person: Person) -> str:
     notice = _format_request_notice("🚨 <b>Вход без доступа</b>", project, person)
-    return (
-        f"{notice}\n<i>Человека нет в списке доступа.</i> "
-        f"Добавить: <code>/add {chat_key} {person.user_id}</code>"
-    )
+    return f"{notice}\n<i>Человека нет в списке доступа.</i>"
 
 
 def format_member_left_notice(project: str, person: Person) -> str:
@@ -158,11 +179,10 @@ def format_member_left_notice(project: str, person: Person) -> str:
     )
 
 
-def format_bot_removed_notice(title: str, chat_key: str) -> str:
+def format_bot_removed_notice(title: str) -> str:
     return (
         f"👥 <b>Бот удалён из группы</b> · {_escape(title)}\n"
-        f"<i>Список доступа сохранён и вернётся, когда бота добавят снова.</i>\n"
-        f"Удалить насовсем: <code>/delgroup {chat_key}</code>"
+        f"<i>Список доступа сохранён и вернётся, когда бота добавят снова.</i>"
     )
 
 
@@ -177,8 +197,8 @@ def format_group_renamed_notice(title: str) -> str:
 def format_missing_rights_notice(title: str) -> str:
     return (
         f"⚠️ <b>Не хватает прав</b> · {_escape(title)}\n"
-        f"<i>Сделайте бота администратором с правом приглашать участников, "
-        f"иначе заявки не будут обрабатываться.</i>"
+        f"<i>Боту нужны права приглашать участников (без него не работают заявки) "
+        f"и банить их (без него не работает кнопка «Выгнать»).</i>"
     )
 
 

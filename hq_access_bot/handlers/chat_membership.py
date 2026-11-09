@@ -7,6 +7,7 @@ from aiogram import Bot, Router
 from aiogram.types import ChatMemberUpdated
 
 from hq_access_bot import texts
+from hq_access_bot.handlers.notice_keyboards import build_unlisted_member_keyboard
 from hq_access_bot.handlers.telegram_mapping import (
     build_chat_key,
     build_person,
@@ -32,13 +33,14 @@ async def handle_member_status_change(
     person = build_person(event.new_chat_member.user)
     if not is_present_in_chat(event.new_chat_member):
         await _remove_departed_member(chat_key, person, services)
-    elif group.has_member(person):
+    elif group.has_member(person.ref):
         async with services.whitelist_store.transaction() as whitelist:
             whitelist.confirm_member(chat_key, person)
     elif not is_present_in_chat(event.old_chat_member):
         services.audit_log.record_member_unlisted(person, group.project)
         await services.notifier.notify_admins(
-            texts.format_unlisted_member_notice(group.project, person, chat_key)
+            texts.format_unlisted_member_notice(group.project, person),
+            build_unlisted_member_keyboard(chat_key, person.user_id),
         )
 
 
