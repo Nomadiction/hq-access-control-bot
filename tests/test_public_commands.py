@@ -1,9 +1,6 @@
-import asyncio
-
-import pytest
 from aiogram.methods import DeleteMessage, DeleteMessages, SendMessage
 
-from hq_access_bot.handlers import public_commands
+from hq_access_bot import history_cleaner
 from tests.support import ADMIN_ID, STRANGER, command, make_user, retry_after, supergroup
 
 
@@ -83,35 +80,6 @@ async def test_clear_covers_a_bounded_part_of_the_history(harness):
     assert batches[-1][-1] == 4001
 
 
-class HeldCleanup:
-    """Stands in for the deletion. The first run stays open until the test lets it finish."""
-
-    def __init__(self):
-        self.cleaned_chat_ids = []
-        self.started = asyncio.Event()
-        self.release = asyncio.Event()
-
-    async def __call__(self, bot, chat_id, newest_message_id):
-        self.cleaned_chat_ids.append(chat_id)
-        self.started.set()
-        if len(self.cleaned_chat_ids) == 1:
-            await self.release.wait()
-
-    async def run_second_while_first_is_running(self, harness, first, second):
-        running = asyncio.create_task(harness.feed(first))
-        await self.started.wait()
-        await harness.feed(second)
-        self.release.set()
-        await running
-
-
-@pytest.fixture
-def held_cleanup(monkeypatch):
-    cleanup = HeldCleanup()
-    monkeypatch.setattr(public_commands, "_delete_history", cleanup)
-    return cleanup
-
-
 async def test_concurrent_clear_in_the_same_chat_is_ignored(harness, held_cleanup):
     update = command("/clear", STRANGER, message_id=150)
 
@@ -149,7 +117,7 @@ async def test_clear_stops_when_single_deletes_hit_overload(harness):
 
 
 async def test_cleanups_across_chats_are_capped(harness, held_cleanup, monkeypatch):
-    monkeypatch.setattr(public_commands, "_MAX_CONCURRENT_CLEANUPS", 1)
+    monkeypatch.setattr(history_cleaner, "_MAX_CONCURRENT_CLEANUPS", 1)
     first = command("/clear", make_user(201), message_id=150)
     second = command("/clear", make_user(202), message_id=150)
 

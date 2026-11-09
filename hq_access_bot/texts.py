@@ -69,12 +69,33 @@ BUTTON_STATUS = "📊 Статус"
 BUTTON_BACK = "← Назад"
 BUTTON_PREVIOUS_PAGE = "◀️"
 BUTTON_NEXT_PAGE = "▶️"
+BUTTON_CLEAR_CHAT = "🧹 Очистить чат"
+BUTTON_SYNC = "🔄 Сверить с Telegram"
+BUTTON_ADD = "➕ Добавить"
+BUTTON_ADD_MORE = "➕ Ещё"
+BUTTON_REMOVE = "➖ Убрать"
+BUTTON_DELETE_GROUP = "🗑 Удалить группу"
+BUTTON_CONFIRM_DELETE = "Да, удалить"
+BUTTON_CANCEL = "Отмена"
+BUTTON_BACK_TO_GROUP = "← К группе"
 
 STALE_BUTTON_NOTICE = "Эта кнопка больше не работает."
 GROUP_GONE_NOTICE = "Этой группы уже нет в списке."
 PANEL_FAILURE_NOTICE = "⚠️ Не получилось. Подробности в логе бота."
+MEMBER_GONE_NOTICE = "Этого участника уже нет в списке."
+GROUP_DELETED_NOTICE = "Группа удалена."
+SYNC_STARTED_NOTICE = "Проверяю участников…"
+SYNC_DONE_NOTE = "✅ Сверено с Telegram"
+SYNC_BUSY_NOTICE = "Сверка уже идёт."
+MEMBERS_INPUT_EMPTY = "⚠️ <b>Пришлите хотя бы один ник или ID.</b>"
+NOT_WAITING_FOR_INPUT = "Сейчас бот ничего не ждёт. Панель управления: /start"
+CLEANUP_BUSY_NOTICE = "Очистка уже идёт."
+CLEARING_NOTICE = "🧹 Очищаю переписку…"
 
 _MEMBERS_PER_CARD_PAGE = 25
+_MAX_LABELS_IN_REPORT = 40
+_MAX_INVALID_PIECES_SHOWN = 10
+_MAX_INVALID_PIECE_LENGTH = 40
 
 _SECONDS_PER_HOUR = 3600
 _SECONDS_PER_MINUTE = 60
@@ -219,8 +240,40 @@ def format_panel_home(whitelist: Whitelist) -> str:
     return f"{_BOT_TITLE}\n{_format_counts(whitelist)}\n\n<i>Все команды: /help</i>"
 
 
-def format_groups_title(page: int, page_count: int) -> str:
-    return f"👥 <b>Группы</b>\n<i>Выберите проект</i>{_format_page_footer(page, page_count)}"
+def format_groups_title(page: int, page_count: int, notice: str | None = None) -> str:
+    title = f"👥 <b>Группы</b>\n<i>Выберите проект</i>{_format_page_footer(page, page_count)}"
+    return f"{notice}\n\n{title}" if notice else title
+
+
+def format_add_prompt(group: Group, error: str | None = None) -> str:
+    prompt = (
+        f"➕ {_format_group_header(group)}\n"
+        "Пришлите ники или ID одним сообщением.\n"
+        "<i>Например: @user1 @user2 123456789</i>"
+    )
+    return f"{error}\n\n{prompt}" if error else prompt
+
+
+def format_remove_title(group: Group, page: int, page_count: int) -> str:
+    hint = "Нажмите на участника, чтобы убрать его." if group.members else "Убирать некого."
+    return f"➖ {_format_group_header(group)}\n<i>{hint}</i>{_format_page_footer(page, page_count)}"
+
+
+def format_member_button(member: Member) -> str:
+    who = member.full_name if member.full_name and not member.username else member.ref.label
+    return f"❌ {who}"
+
+
+def format_member_removed_notice(label: str) -> str:
+    return f"Убран: {label}"
+
+
+def format_delete_confirmation(group: Group) -> str:
+    return (
+        f"🗑 {_format_group_header(group)}\n"
+        f"Удалить группу из списка? Участников: <b>{len(group.members)}</b>.\n"
+        "<i>Вернуть список будет нельзя, заявки в эту группу начнут отклоняться.</i>"
+    )
 
 
 def format_group_button(group: Group) -> str:
@@ -264,8 +317,9 @@ def format_group_ambiguous(target: str, groups: Mapping[str, Group]) -> str:
 
 
 def format_invalid_usernames(usernames: list[str]) -> str:
+    shown = [piece[:_MAX_INVALID_PIECE_LENGTH] for piece in usernames[:_MAX_INVALID_PIECES_SHOWN]]
     return (
-        f"⚠️ <b>Некорректные ники:</b> {_escape(', '.join(usernames))}\n"
+        f"⚠️ <b>Некорректные ники:</b> {_escape(', '.join(shown))}\n"
         f"<i>Ник Telegram: латиница, цифры и подчёркивание, первый символ буква.</i>"
     )
 
@@ -281,15 +335,15 @@ def format_internal_error_notice(error_name: str) -> str:
 def format_add_report(project: str, change: MemberChange) -> str:
     lines = [f"<b>{_escape(project)}</b>"]
     if change.applied:
-        lines.append("✅ Добавлено: " + _escape(", ".join(change.applied)))
+        lines.append("✅ Добавлено: " + _format_labels(change.applied))
     if change.skipped:
-        lines.append("⏭ Уже были: " + _escape(", ".join(change.skipped)))
+        lines.append("⏭ Уже были: " + _format_labels(change.skipped))
     return "\n".join(lines)
 
 
 def format_removal_report(project: str, change: MemberChange) -> str:
     if change.applied:
-        return f"<b>{_escape(project)}</b>\n🗑 Удалено: " + _escape(", ".join(change.applied))
+        return f"<b>{_escape(project)}</b>\n🗑 Удалено: " + _format_labels(change.applied)
     return f"<b>{_escape(project)}</b>\nНикого не нашёл для удаления."
 
 
@@ -324,6 +378,13 @@ def _split_into_messages(
 
 def _count_utf16_units(text: str) -> int:
     return len(text.encode("utf-16-le")) // _UTF16_UNIT_BYTES
+
+
+def _format_labels(labels: list[str]) -> str:
+    """List members in a report, which has to fit one message however many there are."""
+    shown = ", ".join(labels[:_MAX_LABELS_IN_REPORT])
+    hidden_count = len(labels) - _MAX_LABELS_IN_REPORT
+    return _escape(f"{shown} и ещё {hidden_count}" if hidden_count > 0 else shown)
 
 
 def _format_counts(whitelist: Whitelist) -> str:

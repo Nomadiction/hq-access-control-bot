@@ -11,15 +11,22 @@ from aiogram.enums import ParseMode
 from aiogram.methods import AnswerCallbackQuery, EditMessageText, SendMessage
 from aiogram.types import InlineKeyboardButton
 
-from hq_access_bot import telegram_retry
+from hq_access_bot import history_cleaner, telegram_retry
 from hq_access_bot.app import build_dispatcher
 from hq_access_bot.audit_log import AuditLog
 from hq_access_bot.config import DataPaths, Settings
-from hq_access_bot.handlers import public_commands
+from hq_access_bot.history_cleaner import HistoryCleaner
 from hq_access_bot.notifier import Notifier
 from hq_access_bot.services import Services
 from hq_access_bot.whitelist.store import WhitelistStore
-from tests.support import ADMIN_ID, FAKE_TOKEN, RecordingSession, button_press, command
+from tests.support import (
+    ADMIN_ID,
+    FAKE_TOKEN,
+    HeldCleanup,
+    RecordingSession,
+    button_press,
+    command,
+)
 
 
 @dataclass
@@ -99,7 +106,7 @@ def settings() -> Settings:
 
 @pytest.fixture
 def harness(tmp_path, settings, monkeypatch) -> Iterator[BotHarness]:
-    monkeypatch.setattr(public_commands, "_PAUSE_BETWEEN_BATCHES_SECONDS", 0)
+    monkeypatch.setattr(history_cleaner, "_PAUSE_BETWEEN_BATCHES_SECONDS", 0)
     monkeypatch.setattr(telegram_retry, "_NETWORK_RETRY_PAUSE_SECONDS", 0)
     paths = DataPaths.inside(tmp_path)
     session = RecordingSession()
@@ -112,6 +119,22 @@ def harness(tmp_path, settings, monkeypatch) -> Iterator[BotHarness]:
     store.create_if_missing()
     audit_log = AuditLog(paths.audit_log)
     notifier = Notifier(bot, settings.admin_ids)
-    dispatcher = build_dispatcher(settings, Services(store, audit_log, notifier))
+    services = Services(store, audit_log, notifier, HistoryCleaner(bot))
+    dispatcher = build_dispatcher(settings, services)
     yield BotHarness(session, bot, dispatcher, paths, count(1))
     audit_log.close()
+
+
+@pytest.fixture
+def held_cleanup(monkeypatch) -> HeldCleanup:
+    cleanup = HeldCleanup()
+    monkeypatch.setattr(history_cleaner, "_delete_history", cleanup)
+    return cleanup
+
+
+@pytest.fixture
+def many_groups(harness) -> BotHarness:
+    harness.given_whitelist(
+        {str(-1000 - i): {"project": f"Group {i:02}", "members": []} for i in reversed(range(12))}
+    )
+    return harness

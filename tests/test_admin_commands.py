@@ -382,3 +382,11 @@ async def test_reload_labels_members_without_username_and_empty_groups(harness):
     assert "Nik <i>(без @username)</i>" in report
     assert "<i>без имени</i>" in report
     assert "<b>B</b>\n<i>пусто</i>" in report
+
+
+async def test_replies_about_long_input_fit_the_telegram_limit(groups):
+    await groups.feed(command("/add Alpha " + " ".join(str(1000 + i) for i in range(500))))
+    await groups.feed(command("/add Alpha " + " ".join(["@&&&"] * 900)))
+
+    assert all(count_utf16_units(text) <= TELEGRAM_MESSAGE_LIMIT for text in groups.admin_notices())
+    assert "и ещё" in groups.admin_notices()[0]

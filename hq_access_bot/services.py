@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from hq_access_bot.audit_log import AuditLog
+from hq_access_bot.history_cleaner import HistoryCleaner
 from hq_access_bot.notifier import Notifier
 from hq_access_bot.whitelist.store import WhitelistStore
 
@@ -12,3 +13,4 @@ class Services:
     whitelist_store: WhitelistStore
     audit_log: AuditLog
     notifier: Notifier
+    history_cleaner: HistoryCleaner

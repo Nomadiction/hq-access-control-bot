@@ -27,15 +27,25 @@ def parse_target_and_members(args: str | None, whitelist: Whitelist) -> MemberCo
     """
     tokens = (args or "").split()
     boundary = _find_target_end(tokens, whitelist)
+    refs, invalid = _parse_member_tokens(tokens[boundary:])
+    return MemberCommandArgs(_join_target(tokens[:boundary]), refs, invalid)
+
+
+def parse_members(text: str) -> tuple[list[MemberRef], list[str]]:
+    """Read members separated by spaces or commas. Returns them and the unreadable pieces."""
+    return _parse_member_tokens(text.split())
+
+
+def _parse_member_tokens(tokens: list[str]) -> tuple[list[MemberRef], list[str]]:
     refs: list[MemberRef] = []
     invalid: list[str] = []
-    for piece in (piece for token in tokens[boundary:] for piece in _split_pieces(token)):
+    for piece in (piece for token in tokens for piece in _split_pieces(token)):
         ref = _parse_member_piece(piece)
         if ref is None:
             invalid.append(piece)
         else:
             refs.append(ref)
-    return MemberCommandArgs(_join_target(tokens[:boundary]), refs, invalid)
+    return refs, invalid
 
 
 def _find_target_end(tokens: list[str], whitelist: Whitelist) -> int:

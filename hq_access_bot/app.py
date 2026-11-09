@@ -29,6 +29,7 @@ from hq_access_bot.handlers import (
     join_requests,
     public_commands,
 )
+from hq_access_bot.history_cleaner import HistoryCleaner
 from hq_access_bot.instance_lock import hold_instance_lock
 from hq_access_bot.notifier import Notifier
 from hq_access_bot.services import Services
@@ -69,7 +70,7 @@ async def serve(settings: Settings, data_paths: DataPaths) -> None:
     with closing(AuditLog(data_paths.audit_log)) as audit_log:
         async with Bot(token=settings.bot_token, default=bot_defaults) as bot:
             notifier = Notifier(bot, settings.admin_ids)
-            services = Services(whitelist_store, audit_log, notifier)
+            services = Services(whitelist_store, audit_log, notifier, HistoryCleaner(bot))
             dispatcher = build_dispatcher(settings, services)
             await _prepare_bot(bot, settings.admin_ids)
             logger.info("Bot started. Admins: %s", set(settings.admin_ids) or "none")

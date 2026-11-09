@@ -88,8 +88,9 @@ Admins only, in a private chat with the bot:
 | `/reload`                                     | Sync the list with Telegram, show it. |
 | `/status`                                     | Uptime, group and member counts.      |
 
-The control panel shows groups, their members and the bot's status. Its buttons change one
-message in place instead of adding new ones.
+The control panel does the same work with buttons: it shows groups, members and the bot's status,
+adds and removes members, deletes a group after a confirmation, syncs the list with Telegram and
+clears the chat. Its buttons change one message in place instead of adding new ones.
 
 The bot description and command menus are set at startup.
 
@@ -182,6 +183,7 @@ hq_access_bot/
 ├── audit_log.py      access audit
 ├── notifier.py       direct message delivery
 ├── telegram_retry.py retries for Telegram calls that must not be lost
+├── history_cleaner.py chat history cleanup
 ├── services.py       handler dependencies
 ├── bot_profile.py    bot description and menus
 ├── instance_lock.py  guard against a second instance

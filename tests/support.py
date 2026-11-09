@@ -1,6 +1,8 @@
 """Shared test tools: a fake Telegram network and builders for incoming updates."""
 
+import asyncio
 from collections.abc import AsyncGenerator, Callable
+from itertools import count
 from typing import Any
 
 from aiogram import Bot
@@ -13,14 +15,22 @@ from aiogram.exceptions import (
     TelegramServerError,
     TelegramUnauthorizedError,
 )
-from aiogram.methods import GetChatMember, GetMe, TelegramMethod
-from aiogram.types import ChatMemberLeft, ChatMemberMember, ChatMemberRestricted, User
+from aiogram.methods import GetChatMember, GetMe, SendMessage, TelegramMethod
+from aiogram.types import (
+    Chat,
+    ChatMemberLeft,
+    ChatMemberMember,
+    ChatMemberRestricted,
+    Message,
+    User,
+)
 
 ADMIN_ID = 111
 BOT_ID = 123456
 GROUP_ID = -1001
 GROUP_KEY = str(GROUP_ID)
 PANEL_MESSAGE_ID = 70
+FIRST_SENT_MESSAGE_ID = 1000
 TELEGRAM_MESSAGE_LIMIT = 4096
 ALICE_RECORD = {"id": 10, "username": "alice", "in": True, "name": "Alice"}
 FAKE_TOKEN = f"{BOT_ID}:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -109,9 +119,11 @@ class RecordingSession(BaseSession):
     def __init__(self) -> None:
         super().__init__()
         self.calls: list[TelegramMethod[Any]] = []
+        self.suspends = False
         self.failing_methods: set[type[TelegramMethod[Any]]] = set()
         self.chat_members: dict[int, tuple[str, str | None]] = {}
         self._scripted_errors: dict[type[TelegramMethod[Any]], list[ErrorFactory]] = {}
+        self._sent_message_ids = count(FIRST_SENT_MESSAGE_ID)
 
     def script_errors(
         self, method_type: type[TelegramMethod[Any]], *factories: ErrorFactory
@@ -128,6 +140,8 @@ class RecordingSession(BaseSession):
     async def make_request(
         self, bot: Bot, method: TelegramMethod[Any], timeout: int | None = None
     ) -> Any:
+        if self.suspends:
+            await asyncio.sleep(0)
         if not isinstance(method, GetMe):
             self.calls.append(method)
         scripted = self._scripted_errors.get(type(method))
@@ -139,6 +153,9 @@ class RecordingSession(BaseSession):
             raise TelegramBadRequest(method=method, message="forced failure")
         if isinstance(method, GetChatMember):
             return self._build_chat_member(method)
+        if isinstance(method, SendMessage):
+            chat = Chat(id=method.chat_id, type="private")
+            return Message(message_id=next(self._sent_message_ids), date=1, chat=chat)
         return True
 
     def _build_chat_member(self, method: GetChatMember) -> Any:
@@ -151,6 +168,29 @@ class RecordingSession(BaseSession):
         if status == "restricted_left":
             return ChatMemberRestricted(user=user, **{**_RESTRICTIONS, "is_member": False})
         return ChatMemberLeft(user=user)
+
+
+class HeldCleanup:
+    """Stands in for the deletion. The first run stays open until the test lets it finish."""
+
+    def __init__(self) -> None:
+        self.cleaned_chat_ids: list[int] = []
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self, bot: Bot, chat_id: int, newest_message_id: int) -> None:
+        self.cleaned_chat_ids.append(chat_id)
+        self.started.set()
+        if len(self.cleaned_chat_ids) == 1:
+            await self.release.wait()
+
+    async def run_second_while_first_is_running(self, harness: Any, first: dict, second: dict):
+        running = asyncio.create_task(harness.feed(first))
+        async with asyncio.timeout(5):
+            await self.started.wait()
+        await harness.feed(second)
+        self.release.set()
+        await running
 
 
 def make_user(user_id: int, username: str | None = None, first_name: str = "User") -> dict:
@@ -242,7 +282,12 @@ def command(
     }
 
 
-def button_press(data: str, sender: dict | None = None, chat: dict | None = None) -> dict:
+def button_press(
+    data: str,
+    sender: dict | None = None,
+    chat: dict | None = None,
+    message_id: int = PANEL_MESSAGE_ID,
+) -> dict:
     sender = sender or make_user(ADMIN_ID, "root")
     return {
         "callback_query": {
@@ -251,7 +296,7 @@ def button_press(data: str, sender: dict | None = None, chat: dict | None = None
             "chat_instance": "instance",
             "data": data,
             "message": {
-                "message_id": PANEL_MESSAGE_ID,
+                "message_id": message_id,
                 "date": 1,
                 "chat": chat or private_chat(sender["id"]),
                 "text": "panel",

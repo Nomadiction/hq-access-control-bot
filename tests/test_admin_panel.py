@@ -22,6 +22,9 @@ INACTIVE_KEY = "-1002"
 LONGEST_CHAT_KEY = "-1009999999999999"
 CALLBACK_DATA_LIMIT_BYTES = 64
 MAX_CARD_PAGES_IN_A_TEST = 20
+HOME_LABELS = ["👥 Группы", "📊 Статус", "🧹 Очистить чат"]
+GROUPS_FOOTER_LABELS = ["🔄 Сверить с Telegram", "← Назад"]
+CARD_ACTION_LABELS = ["➕ Добавить", "➖ Убрать", "🗑 Удалить группу", "← Назад"]
 
 # With this name length a full page of members lands within the room kept for the page footer.
 NAME_FILLING_THE_FOOTER_ROOM = "я" * 124
@@ -42,7 +45,7 @@ async def test_start_opens_the_panel_for_an_admin(panel):
     await panel.feed(command("/start"))
 
     assert "Групп: <b>2</b> · Участников: <b>3</b>" in panel.current_screen().text
-    assert panel.screen_labels() == ["👥 Группы", "📊 Статус"]
+    assert panel.screen_labels() == HOME_LABELS
 
 
 async def test_start_shows_no_panel_to_other_users(panel):
@@ -61,7 +64,7 @@ async def test_start_shows_no_panel_inside_a_group(panel):
 async def test_clear_returns_an_admin_to_the_panel(panel):
     await panel.feed(command("/clear", message_id=1))
 
-    assert panel.screen_labels() == ["👥 Группы", "📊 Статус"]
+    assert panel.screen_labels() == HOME_LABELS
 
 
 async def test_button_changes_the_pressed_message_instead_of_sending_a_new_one(panel):
@@ -76,7 +79,7 @@ async def test_button_changes_the_pressed_message_instead_of_sending_a_new_one(p
 async def test_groups_screen_lists_projects_with_member_counts(panel):
     await panel.open_groups()
 
-    assert panel.screen_labels() == ["Alpha · 2", "💤 Old · 1", "← Назад"]
+    assert panel.screen_labels() == ["Alpha · 2", "💤 Old · 1", *GROUPS_FOOTER_LABELS]
 
 
 async def test_groups_screen_says_when_the_list_is_empty(harness):
@@ -122,7 +125,7 @@ async def test_back_buttons_walk_up_to_the_main_screen(panel):
     assert "Alpha · 2" in panel.screen_labels()
 
     await panel.press("Назад")
-    assert panel.screen_labels() == ["👥 Группы", "📊 Статус"]
+    assert panel.screen_labels() == HOME_LABELS
 
 
 async def test_status_button_reports_uptime_and_counts(panel):
@@ -135,20 +138,12 @@ async def test_status_button_reports_uptime_and_counts(panel):
     assert panel.screen_labels() == ["← Назад"]
 
 
-@pytest.fixture
-def many_groups(harness):
-    harness.given_whitelist(
-        {str(-1000 - i): {"project": f"Group {i:02}", "members": []} for i in reversed(range(12))}
-    )
-    return harness
-
-
 async def test_groups_are_sorted_and_split_into_pages(many_groups):
     await many_groups.open_groups()
 
     labels = many_groups.screen_labels()
     assert labels[:10] == [f"Group {i:02} · 0" for i in range(10)]
-    assert labels[10:] == ["▶️", "← Назад"]
+    assert labels[10:] == ["▶️", *GROUPS_FOOTER_LABELS]
     assert "Стр. 1 из 2" in many_groups.current_screen().text
 
 
@@ -156,7 +151,12 @@ async def test_last_groups_page_can_only_go_back(many_groups):
     await many_groups.open_groups()
     await many_groups.press("▶️")
 
-    assert many_groups.screen_labels() == ["Group 10 · 0", "Group 11 · 0", "◀️", "← Назад"]
+    assert many_groups.screen_labels() == [
+        "Group 10 · 0",
+        "Group 11 · 0",
+        "◀️",
+        *GROUPS_FOOTER_LABELS,
+    ]
     assert "Стр. 2 из 2" in many_groups.current_screen().text
 
 
@@ -218,7 +218,7 @@ async def test_card_page_that_no_longer_exists_shows_the_last_one(harness):
     await harness.feed(button_press(next_page.callback_data))
 
     assert "@user_004" in harness.current_screen().text
-    assert harness.screen_labels() == ["← Назад"]
+    assert harness.screen_labels() == CARD_ACTION_LABELS
 
 
 async def test_groups_page_that_no_longer_exists_shows_the_last_one(many_groups):
@@ -228,14 +228,14 @@ async def test_groups_page_that_no_longer_exists_shows_the_last_one(many_groups)
 
     await many_groups.feed(button_press(next_page.callback_data))
 
-    assert many_groups.screen_labels() == ["Only · 0", "← Назад"]
+    assert many_groups.screen_labels() == ["Only · 0", *GROUPS_FOOTER_LABELS]
 
 
 async def test_group_buttons_go_two_in_a_row(many_groups):
     await many_groups.open_groups()
 
     rows = many_groups.current_screen().reply_markup.inline_keyboard
-    assert [len(row) for row in rows] == [2, 2, 2, 2, 2, 1, 1]
+    assert [len(row) for row in rows] == [2, 2, 2, 2, 2, 1, 1, 1]
 
 
 async def test_button_data_stays_within_the_telegram_limit(harness):
@@ -260,7 +260,7 @@ async def test_button_of_a_deleted_group_explains_and_shows_the_list(panel):
     await panel.feed(button_press(alpha.callback_data))
 
     assert panel.last_toast() == "Этой группы уже нет в списке."
-    assert panel.screen_labels() == ["Old · 0", "← Назад"]
+    assert panel.screen_labels() == ["Old · 0", *GROUPS_FOOTER_LABELS]
 
 
 async def test_panel_buttons_do_nothing_for_a_non_admin(panel):
@@ -387,7 +387,7 @@ async def test_button_of_a_deleted_group_stays_on_its_page_of_the_list(many_grou
 
     await many_groups.feed(button_press(deleted.callback_data))
 
-    assert many_groups.screen_labels() == ["Group 10 · 0", "◀️", "← Назад"]
+    assert many_groups.screen_labels() == ["Group 10 · 0", "◀️", *GROUPS_FOOTER_LABELS]
     assert many_groups.last_toast() == "Этой группы уже нет в списке."
 
 
