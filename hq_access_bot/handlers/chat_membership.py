@@ -3,15 +3,14 @@
 Telegram sends these events only if the bot is an administrator of the group.
 """
 
-from aiogram import Router
+from aiogram import Bot, Router
 from aiogram.types import ChatMemberUpdated
 
 from hq_access_bot import texts
 from hq_access_bot.handlers.telegram_mapping import (
-    DEPARTED_STATUSES,
-    PRESENT_STATUSES,
     build_chat_key,
     build_person,
+    is_present_in_chat,
 )
 from hq_access_bot.services import Services
 from hq_access_bot.whitelist.identity import Person
@@ -23,18 +22,24 @@ def build_router() -> Router:
     return router
 
 
-async def handle_member_status_change(event: ChatMemberUpdated, services: Services) -> None:
+async def handle_member_status_change(
+    event: ChatMemberUpdated, bot: Bot, services: Services
+) -> None:
     chat_key = build_chat_key(event.chat)
     group = services.whitelist_store.read().groups.get(chat_key)
-    if group is None:
+    if group is None or event.new_chat_member.user.id == bot.id:
         return
     person = build_person(event.new_chat_member.user)
-    status = event.new_chat_member.status
-    if status in DEPARTED_STATUSES:
+    if not is_present_in_chat(event.new_chat_member):
         await _remove_departed_member(chat_key, person, services)
-    elif status in PRESENT_STATUSES and group.has_member(person):
+    elif group.has_member(person):
         async with services.whitelist_store.transaction() as whitelist:
             whitelist.confirm_member(chat_key, person)
+    elif not is_present_in_chat(event.old_chat_member):
+        services.audit_log.record_member_unlisted(person, group.project)
+        await services.notifier.notify_admins(
+            texts.format_unlisted_member_notice(group.project, person, chat_key)
+        )
 
 
 async def _remove_departed_member(chat_key: str, person: Person, services: Services) -> None:

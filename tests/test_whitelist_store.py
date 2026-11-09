@@ -53,8 +53,41 @@ def test_codec_merges_duplicate_members():
     ]
 
 
-def test_missing_file_reads_as_empty_whitelist(store):
+def test_missing_file_is_an_error(store):
+    with pytest.raises(WhitelistCorruptedError, match=r"whitelist\.json"):
+        store.read()
+
+
+def test_path_that_cannot_be_read_is_an_error(tmp_path):
+    with pytest.raises(WhitelistCorruptedError):
+        WhitelistStore(tmp_path).read()
+
+
+def test_first_run_creates_an_empty_list(store):
+    store.create_if_missing()
+
     assert store.read().groups == {}
+
+
+def test_creation_keeps_an_existing_list(store, path):
+    path.write_text('{"-1": {"project": "A", "members": []}}', encoding="utf-8")
+
+    store.create_if_missing()
+
+    assert set(store.read().groups) == {"-1"}
+
+
+def test_byte_order_mark_is_accepted(store, path):
+    path.write_bytes(b"\xef\xbb\xbf" + b'{"-1": {"project": "A", "members": []}}')
+
+    assert set(store.read().groups) == {"-1"}
+
+
+def test_wrong_encoding_is_reported_as_corruption(store, path):
+    path.write_bytes('{"-1": {"project": "Проект", "members": []}}'.encode("cp1251"))
+
+    with pytest.raises(WhitelistCorruptedError):
+        store.read()
 
 
 @pytest.mark.parametrize(
@@ -64,6 +97,18 @@ def test_missing_file_reads_as_empty_whitelist(store):
         '{"-1": {"project": "A"}}',
         '{"-1": {"project": "A", "members": [{"name": "nobody"}]}}',
         '{"-1": {"project": "A", "ids": [1]}}',
+        "[]",
+        '{"abc": {"project": "A", "members": []}}',
+        '{"-1": {"members": []}}',
+        '{"-1": {"project": "  ", "members": []}}',
+        '{"-1": {"project": 5, "members": []}}',
+        '{"-1": {"project": "A", "members": [{"id": true}]}}',
+        '{"-1": {"project": "A", "members": [{"id": "12"}]}}',
+        '{"-1": {"project": "A", "members": 5}}',
+        '{"-1": {"project": "A", "members": {}}}',
+        '{"-1": {"project": "A", "members": ""}}',
+        '{"-1": {"project": "A", "members": [], "inactive": "false"}}',
+        '{"-1": {"project": "A", "members": [{"id": 1, "in": "false"}]}}',
     ],
 )
 def test_unreadable_file_raises_instead_of_reading_empty(store, path, content):
@@ -84,6 +129,7 @@ async def test_transaction_refuses_to_overwrite_corrupted_file(store, path):
 
 
 async def test_transaction_persists_changes(store, path):
+    store.create_if_missing()
     async with store.transaction() as whitelist:
         whitelist.register_group("-1", "A")
         whitelist.groups["-1"].add_all([MemberRef(user_id=1)])
@@ -94,7 +140,36 @@ async def test_transaction_persists_changes(store, path):
     assert list(path.parent.iterdir()) == [path]
 
 
+async def test_transaction_without_changes_leaves_the_file_alone(store, path):
+    original = '{"-1":{"project":"A","members":[]}}'
+    path.write_text(original, encoding="utf-8")
+
+    async with store.transaction():
+        pass
+
+    assert path.read_text(encoding="utf-8") == original
+
+
+async def test_data_reaches_the_disk_before_the_file_is_replaced(store, path, monkeypatch):
+    path.write_text("{}", encoding="utf-8")
+    events = []
+    real_replace = Path.replace
+
+    def recording_replace(self, target):
+        events.append("replace")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(store_module.os, "fsync", lambda fd: events.append("fsync"))
+    monkeypatch.setattr(Path, "replace", recording_replace)
+
+    async with store.transaction() as whitelist:
+        whitelist.register_group("-1", "A")
+
+    assert events == ["fsync", "replace"]
+
+
 async def test_cyrillic_is_stored_readable(store, path):
+    store.create_if_missing()
     async with store.transaction() as whitelist:
         whitelist.register_group("-1", "Проект")
 
@@ -102,6 +177,8 @@ async def test_cyrillic_is_stored_readable(store, path):
 
 
 async def test_failed_transaction_changes_nothing(store, path):
+    store.create_if_missing()
+
     async with store.transaction() as whitelist:
         whitelist.register_group("-1", "A")
 
@@ -119,6 +196,7 @@ def no_retry_pause(monkeypatch):
 
 
 async def test_replace_is_retried_while_file_is_locked(store, path, monkeypatch, no_retry_pause):
+    store.create_if_missing()
     real_replace = Path.replace
     failures = iter([True, True, False])
 

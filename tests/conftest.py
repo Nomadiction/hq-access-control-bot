@@ -10,6 +10,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.methods import SendMessage
 
+from hq_access_bot import telegram_retry
 from hq_access_bot.app import build_dispatcher
 from hq_access_bot.audit_log import AuditLog
 from hq_access_bot.config import DataPaths, Settings
@@ -70,6 +71,7 @@ def settings() -> Settings:
 @pytest.fixture
 def harness(tmp_path, settings, monkeypatch) -> Iterator[BotHarness]:
     monkeypatch.setattr(public_commands, "_PAUSE_BETWEEN_BATCHES_SECONDS", 0)
+    monkeypatch.setattr(telegram_retry, "_NETWORK_RETRY_PAUSE_SECONDS", 0)
     paths = DataPaths.inside(tmp_path)
     session = RecordingSession()
     bot = Bot(
@@ -78,6 +80,7 @@ def harness(tmp_path, settings, monkeypatch) -> Iterator[BotHarness]:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     store = WhitelistStore(paths.whitelist)
+    store.create_if_missing()
     audit_log = AuditLog(paths.audit_log)
     notifier = Notifier(bot, settings.admin_ids)
     dispatcher = build_dispatcher(settings, Services(store, audit_log, notifier))

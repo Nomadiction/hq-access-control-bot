@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from enum import Enum, auto
 from types import MappingProxyType
 
 from hq_access_bot.whitelist.identity import MemberRef, ObservedMember, Person
@@ -44,8 +45,13 @@ class Member:
         )
 
     def has_departed(self, observation: ObservedMember | None) -> bool:
-        """True only for an entry that had joined and is now observed outside the group."""
-        return observation is not None and not observation.is_in_group and self.has_joined
+        """True only if the entry had joined before the check and is now seen outside."""
+        return (
+            observation is not None
+            and observation.was_joined
+            and not observation.is_in_group
+            and self.has_joined
+        )
 
     def confirm(self, person: Person) -> None:
         """Bind the entry to the person who joined; a missing username keeps the old one."""
@@ -71,14 +77,39 @@ class MemberChange:
     skipped: list[str]
 
 
+class GroupRegistration(Enum):
+    NEW = auto()
+    RESTORED = auto()
+    ALREADY_TRACKED = auto()
+
+
 @dataclass(slots=True)
 class Group:
+    """A project's access list. An inactive group keeps its list while the bot is away."""
+
     project: str
     _members: list[Member] = field(default_factory=list)
+    is_active: bool = True
 
     @property
     def members(self) -> tuple[Member, ...]:
         return tuple(self._members)
+
+    def deactivate(self) -> bool:
+        """Return whether the group was active until now."""
+        was_active = self.is_active
+        self.is_active = False
+        return was_active
+
+    def restore(self, project: str) -> None:
+        self.is_active = True
+        self.project = project
+
+    def rename(self, project: str) -> bool:
+        """Return whether the name actually changed."""
+        is_new_name = self.project != project
+        self.project = project
+        return is_new_name
 
     def has_member(self, person: Person) -> bool:
         return self._find_member(person) is not None
@@ -157,23 +188,35 @@ class Whitelist:
     def groups(self) -> Mapping[str, Group]:
         return MappingProxyType(self._groups)
 
-    def find_group_key(self, target: str) -> str | None:
-        """Find a group by chat_id or by project name, case-insensitively."""
+    def find_group_keys(self, target: str) -> list[str]:
+        """Find groups by chat_id or by project name, case-insensitively.
+
+        Project names come from chat titles and can repeat, so a name may match several.
+        """
         if target in self._groups:
-            return target
+            return [target]
         lowered = target.lower()
-        return next((k for k, g in self._groups.items() if g.project.lower() == lowered), None)
+        return [key for key, group in self._groups.items() if group.project.lower() == lowered]
 
-    def find_group(self, target: str) -> Group | None:
-        key = self.find_group_key(target)
-        return self._groups[key] if key is not None else None
+    def register_group(self, chat_key: str, project: str) -> GroupRegistration:
+        """Track a group, bringing back the saved list if the bot was removed from it."""
+        group = self._groups.get(chat_key)
+        if group is None:
+            self._groups[chat_key] = Group(project)
+            return GroupRegistration.NEW
+        if group.is_active:
+            return GroupRegistration.ALREADY_TRACKED
+        group.restore(project)
+        return GroupRegistration.RESTORED
 
-    def register_group(self, chat_key: str, project: str) -> bool:
-        """Create an empty group. Returns False if it already exists."""
-        if chat_key in self._groups:
-            return False
-        self._groups[chat_key] = Group(project)
-        return True
+    def deactivate_group(self, chat_key: str) -> bool:
+        """Keep the list of a group the bot was removed from. False if nothing changed."""
+        group = self._groups.get(chat_key)
+        return group is not None and group.deactivate()
+
+    def rename_group(self, chat_key: str, project: str) -> bool:
+        group = self._groups.get(chat_key)
+        return group is not None and group.rename(project)
 
     def remove_group(self, chat_key: str) -> Group | None:
         return self._groups.pop(chat_key, None)
@@ -184,8 +227,10 @@ class Whitelist:
             group.confirm_member(person)
 
     def reconcile(self, observed: Mapping[str, Mapping[int, ObservedMember]]) -> None:
-        for chat_key, group in self._groups.items():
-            group.reconcile(observed.get(chat_key, {}))
+        for chat_key, observed_members in observed.items():
+            group = self._groups.get(chat_key)
+            if group is not None:
+                group.reconcile(observed_members)
 
     def count_unique_members(self) -> int:
         return len({m.identity for group in self._groups.values() for m in group.members})

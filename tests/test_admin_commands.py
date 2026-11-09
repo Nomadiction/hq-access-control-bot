@@ -1,5 +1,5 @@
 import pytest
-from aiogram.methods import SendMessage
+from aiogram.methods import GetChatMember, SendMessage
 
 from hq_access_bot.handlers.command_args import parse_target_and_members
 from hq_access_bot.whitelist.identity import MemberRef
@@ -45,23 +45,50 @@ def groups(harness):
     [
         (None, "", []),
         ("Alpha", "Alpha", []),
-        ("Alpha @A 5", "Alpha", [MemberRef(username="a"), MemberRef(user_id=5)]),
-        ("Beta Two @a", "Beta Two", [MemberRef(username="a")]),
+        ("Alpha @Anna 5", "Alpha", [MemberRef(username="anna"), MemberRef(user_id=5)]),
+        ("Beta Two @anna", "Beta Two", [MemberRef(username="anna")]),
         ("-100123 7", "-100123", [MemberRef(user_id=7)]),
-        ("Alpha @", "Alpha", []),
         ("Test 7", "Test", [MemberRef(user_id=7)]),
-        ("Test 2 @a", "Test 2", [MemberRef(username="a")]),
+        ("Test 2 @anna", "Test 2", [MemberRef(username="anna")]),
         ("Test 2 7", "Test 2", [MemberRef(user_id=7)]),
         ("Test 2", "Test 2", []),
         ("Release 3 8 9", "Release 3", [MemberRef(user_id=8), MemberRef(user_id=9)]),
-        ("Unknown 3 @a", "Unknown", [MemberRef(user_id=3), MemberRef(username="a")]),
+        ("Unknown 3 @anna", "Unknown", [MemberRef(user_id=3), MemberRef(username="anna")]),
+        ("Alpha @anna, @petr", "Alpha", [MemberRef(username="anna"), MemberRef(username="petr")]),
+        ("Alpha @anna , 5", "Alpha", [MemberRef(username="anna"), MemberRef(user_id=5)]),
+        (
+            "Alpha @anna,@petr,5",
+            "Alpha",
+            [MemberRef(username="anna"), MemberRef(username="petr"), MemberRef(user_id=5)],
+        ),
+        ("Alpha ²", "Alpha ²", []),
+        ("Test 2, @anna", "Test 2", [MemberRef(username="anna")]),
+        ("Unknown 3, @anna", "Unknown", [MemberRef(user_id=3), MemberRef(username="anna")]),
     ],
 )
 def test_parse_target_and_members(args, expected_target, expected_refs):
-    assert parse_target_and_members(args, KNOWN_PROJECTS) == (expected_target, expected_refs)
+    parsed = parse_target_and_members(args, KNOWN_PROJECTS)
+
+    assert (parsed.target, parsed.refs, parsed.invalid) == (expected_target, expected_refs, [])
 
 
-@pytest.mark.parametrize("text", ["/status", "/add Alpha @x", "/remove Alpha @alice", "/reload"])
+@pytest.mark.parametrize("bad_username", ["@", "@a!b", "@abc", "@1abcd", "@" + "a" * 33, "@анна"])
+def test_parse_reports_invalid_usernames(bad_username):
+    parsed = parse_target_and_members(f"Alpha @anna {bad_username}", KNOWN_PROJECTS)
+
+    assert parsed.target == "Alpha"
+    assert parsed.refs == [MemberRef(username="anna")]
+    assert parsed.invalid == [bad_username]
+
+
+@pytest.mark.parametrize("good_username", ["@abcd", "@" + "a" * 32, "@a_1b"])
+def test_parse_accepts_valid_usernames(good_username):
+    assert parse_target_and_members(f"Alpha {good_username}", KNOWN_PROJECTS).invalid == []
+
+
+@pytest.mark.parametrize(
+    "text", ["/status", "/add Alpha @xuser", "/remove Alpha @alice", "/reload"]
+)
 async def test_admin_commands_are_ignored_for_strangers(groups, text):
     before = groups.whitelist_on_disk()
 
@@ -86,29 +113,40 @@ async def test_status_counts_groups_and_unique_members(groups):
 
 
 async def test_add_reports_new_and_existing_members(groups):
-    await groups.feed(command("/add Alpha @New 555 @alice 10"))
+    await groups.feed(command("/add Alpha @Newbie 555 @alice 10"))
 
     usernames_and_ids = [
         (m.get("id"), m.get("username")) for m in groups.members_on_disk(GROUP_KEY)
     ]
-    assert usernames_and_ids[2:] == [(None, "new"), (555, None)]
-    assert "✅ Добавлено: @new, id 555" in groups.admin_notices()[0]
+    assert usernames_and_ids[2:] == [(None, "newbie"), (555, None)]
+    assert "✅ Добавлено: @newbie, id 555" in groups.admin_notices()[0]
     assert "⏭ Уже были: @alice, id 10" in groups.admin_notices()[0]
-    assert groups.audit_events() == ["ADD project=Alpha @new, id 555"]
+    assert groups.audit_events() == ["ADD project=Alpha @newbie, id 555"]
+
+
+@pytest.mark.parametrize("text", ["/add Alpha @a!b @xuser", "/remove Alpha @a!b"])
+async def test_invalid_username_rejects_the_whole_command(groups, text):
+    before = groups.whitelist_on_disk()
+
+    await groups.feed(command(text))
+
+    assert groups.whitelist_on_disk() == before
+    assert "Некорректные ники" in groups.admin_notices()[0]
+    assert "a!b" in groups.admin_notices()[0]
 
 
 async def test_add_accepts_multi_word_project_in_any_case(groups):
-    await groups.feed(command("/add beta two @x"))
+    await groups.feed(command("/add beta two @xuser"))
 
-    assert groups.members_on_disk(SECOND_KEY)[1] == {"username": "x"}
+    assert groups.members_on_disk(SECOND_KEY)[1] == {"username": "xuser"}
 
 
 async def test_add_targets_a_project_whose_name_ends_in_a_number(harness):
     harness.given_whitelist({GROUP_KEY: {"project": "Test 2", "members": []}})
 
-    await harness.feed(command("/add Test 2 @x"))
+    await harness.feed(command("/add Test 2 @xuser"))
 
-    assert harness.members_on_disk(GROUP_KEY) == [{"username": "x"}]
+    assert harness.members_on_disk(GROUP_KEY) == [{"username": "xuser"}]
 
 
 async def test_add_with_only_existing_members_writes_no_audit(groups):
@@ -119,12 +157,54 @@ async def test_add_with_only_existing_members_writes_no_audit(groups):
 
 @pytest.mark.parametrize(
     "text",
-    ["/add Nope @x", "/remove Nope @x", "/delgroup Nope"],
+    ["/add Nope @xuser", "/remove Nope @xuser", "/delgroup Nope"],
 )
 async def test_unknown_group_is_reported(groups, text):
     await groups.feed(command(text))
 
     assert groups.admin_notices() == ["Не нашёл группу: <b>Nope</b>"]
+
+
+@pytest.fixture
+def twin_groups(harness):
+    harness.given_whitelist(
+        {
+            GROUP_KEY: {"project": "Team", "members": [{"username": "first"}]},
+            SECOND_KEY: {"project": "team", "members": []},
+        }
+    )
+    return harness
+
+
+@pytest.mark.parametrize("text", ["/add Team @xuser", "/remove Team @first", "/delgroup Team"])
+async def test_ambiguous_project_name_changes_nothing_and_lists_the_groups(twin_groups, text):
+    before = twin_groups.whitelist_on_disk()
+
+    await twin_groups.feed(command(text))
+
+    assert twin_groups.whitelist_on_disk() == before
+    assert GROUP_KEY in twin_groups.admin_notices()[0]
+    assert SECOND_KEY in twin_groups.admin_notices()[0]
+
+
+async def test_ambiguous_reply_shows_which_group_is_inactive(harness):
+    harness.given_whitelist(
+        {
+            GROUP_KEY: {"project": "Team", "members": [], "inactive": True},
+            SECOND_KEY: {"project": "Team", "members": []},
+        }
+    )
+
+    await harness.feed(command("/delgroup Team"))
+
+    assert "<b>Team</b> <i>(бот не в группе)</i>" in harness.admin_notices()[0]
+
+
+async def test_chat_id_selects_one_of_the_twin_groups(twin_groups):
+    await twin_groups.feed(command(f"/add {SECOND_KEY} @xuser"))
+
+    assert twin_groups.members_on_disk(SECOND_KEY) == [{"username": "xuser"}]
+    assert twin_groups.members_on_disk(GROUP_KEY) == [{"username": "first"}]
 
 
 @pytest.mark.parametrize(
@@ -157,9 +237,9 @@ async def test_remove_by_id_labels_member_without_username(groups):
 
 
 async def test_remove_targets_a_project_whose_name_ends_in_a_number(harness):
-    harness.given_whitelist({GROUP_KEY: {"project": "Test 2", "members": [{"username": "x"}]}})
+    harness.given_whitelist({GROUP_KEY: {"project": "Test 2", "members": [{"username": "xuser"}]}})
 
-    await harness.feed(command("/remove Test 2 @x"))
+    await harness.feed(command("/remove Test 2 @xuser"))
 
     assert harness.members_on_disk(GROUP_KEY) == []
 
@@ -200,6 +280,54 @@ async def test_reload_syncs_with_telegram_and_lists_members(groups):
     report = groups.admin_notices()[0]
     assert "@pending <i>· ожидает входа</i>" in report
     assert "@fresh <tg-spoiler>20</tg-spoiler>" in report
+
+
+async def test_reload_removes_restricted_member_who_left(groups):
+    groups.session.chat_members = {10: ("restricted_left", "alice")}
+
+    await groups.feed(command("/reload"))
+
+    assert groups.members_on_disk(GROUP_KEY) == [{"username": "pending"}]
+
+
+async def test_reload_keeps_a_member_who_joined_during_the_check(harness, monkeypatch):
+    awaiting = {"id": 30, "username": "newbie"}
+    harness.given_whitelist({GROUP_KEY: {"project": "A", "members": [awaiting]}})
+    harness.session.chat_members = {30: ("left", "newbie")}
+    answer_from_telegram = harness.session._build_chat_member
+
+    def join_while_telegram_answers(method):
+        joined = {**awaiting, "in": True}
+        harness.given_whitelist({GROUP_KEY: {"project": "A", "members": [joined]}})
+        return answer_from_telegram(method)
+
+    monkeypatch.setattr(harness.session, "_build_chat_member", join_while_telegram_answers)
+
+    await harness.feed(command("/reload"))
+
+    assert harness.members_on_disk(GROUP_KEY) == [{**awaiting, "in": True}]
+
+
+async def test_reload_does_not_poll_inactive_groups_and_marks_them(harness):
+    harness.given_whitelist(
+        {GROUP_KEY: {"project": "A", "members": [{"id": 1, "in": True}], "inactive": True}}
+    )
+
+    await harness.feed(command("/reload"))
+
+    assert harness.calls_of(GetChatMember) == []
+    assert harness.members_on_disk(GROUP_KEY) == [{"id": 1, "in": True}]
+    assert "<b>A</b> <i>(бот не в группе)</i>" in harness.admin_notices()[0]
+
+
+async def test_inactive_group_can_still_be_edited_and_finally_deleted(harness):
+    harness.given_whitelist({GROUP_KEY: {"project": "A", "members": [], "inactive": True}})
+
+    await harness.feed(command("/add A @xuser"))
+    assert harness.members_on_disk(GROUP_KEY) == [{"username": "xuser"}]
+
+    await harness.feed(command("/delgroup A"))
+    assert harness.whitelist_on_disk() == {}
 
 
 async def test_reload_splits_a_long_list_within_the_telegram_limit(harness):

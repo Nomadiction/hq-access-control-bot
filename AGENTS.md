@@ -28,8 +28,8 @@ pytest -q
   after the block exits, because the lock is held inside it.
 - Messages shown to Telegram users live in `hq_access_bot/texts.py` and `bot_profile.py` and are in
   Russian. Everything else is in English.
-- The JSON keys of `whitelist.json` (`project`, `members`, `id`, `username`, `in`, `name`) are the
-  on-disk format of live data. Changing them needs a migration.
+- The JSON keys of `whitelist.json` (`project`, `members`, `inactive`, `id`, `username`, `in`, `name`)
+  are the on-disk format of live data. Changing them needs a migration.
 
 ## Commits
 

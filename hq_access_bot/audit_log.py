@@ -32,6 +32,12 @@ class AuditLog:
     def record_request_declined(self, person: Person, project: str) -> None:
         self._record_request("DECLINED", person, project)
 
+    def record_request_failed(self, person: Person, project: str) -> None:
+        self._record_request("REQUEST-FAILED", person, project)
+
+    def record_member_unlisted(self, person: Person, project: str) -> None:
+        self._record_request("MEMBER-UNLISTED", person, project)
+
     def record_member_left(self, person: Person, project: str, removed: list[str]) -> None:
         self._write("MEMBER-LEFT id=%s project=%s %s", person.user_id, project, ", ".join(removed))
 
@@ -44,8 +50,14 @@ class AuditLog:
     def record_group_registered(self, chat_key: str, title: str) -> None:
         self._write("GROUP-ADDED %s «%s»", chat_key, title)
 
-    def record_group_lost(self, chat_key: str, title: str) -> None:
-        self._write("GROUP-REMOVED %s «%s»", chat_key, title)
+    def record_group_deactivated(self, chat_key: str, title: str) -> None:
+        self._write("GROUP-INACTIVE %s «%s»", chat_key, title)
+
+    def record_group_restored(self, chat_key: str, title: str) -> None:
+        self._write("GROUP-RESTORED %s «%s»", chat_key, title)
+
+    def record_group_renamed(self, chat_key: str, title: str) -> None:
+        self._write("GROUP-RENAMED %s «%s»", chat_key, title)
 
     def record_group_deleted_by_admin(self, chat_key: str, project: str) -> None:
         self._write("GROUP-DELETED %s «%s» (manual)", chat_key, project)

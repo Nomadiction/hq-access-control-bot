@@ -1,9 +1,10 @@
 """All bot messages, in Telegram HTML markup."""
 
+from collections.abc import Mapping
 from html import escape
 
 from hq_access_bot.whitelist.identity import Person
-from hq_access_bot.whitelist.models import Member, MemberChange, Whitelist
+from hq_access_bot.whitelist.models import Group, Member, MemberChange, Whitelist
 
 UNKNOWN_PROJECT = "проект"
 
@@ -31,6 +32,10 @@ DECLINED_DIRECT_MESSAGE = (
     "⛔ <b>Заявка отклонена</b>\n"
     "Вашего аккаунта нет в списке доступа этого проекта.\n"
     "<i>Если это ошибка - напишите администратору, он добавит вас в список.</i>"
+)
+
+REQUEST_FAILED_DIRECT_MESSAGE = (
+    "⚠️ <b>Заявку не удалось обработать</b>\n<i>Администратор уже предупреждён.</i>"
 )
 
 ADD_USAGE = (
@@ -94,6 +99,20 @@ def format_request_declined_notice(project: str, person: Person) -> str:
     return _format_request_notice("⛔ <b>Заявка отклонена</b>", project, person)
 
 
+def format_request_failed_notice(project: str, person: Person) -> str:
+    heading = "⚠️ <b>Заявка не обработана</b>"
+    notice = _format_request_notice(heading, project, person)
+    return f"{notice}\n<i>Telegram не принял решение. Обработайте заявку вручную.</i>"
+
+
+def format_unlisted_member_notice(project: str, person: Person, chat_key: str) -> str:
+    notice = _format_request_notice("🚨 <b>Вход без доступа</b>", project, person)
+    return (
+        f"{notice}\n<i>Человека нет в списке доступа.</i> "
+        f"Добавить: <code>/add {chat_key} {person.user_id}</code>"
+    )
+
+
 def format_member_left_notice(project: str, person: Person) -> str:
     who = f"@{_escape(person.username)}" if person.username else _escape(person.full_name)
     return (
@@ -103,10 +122,27 @@ def format_member_left_notice(project: str, person: Person) -> str:
     )
 
 
-def format_bot_removed_notice(title: str) -> str:
+def format_bot_removed_notice(title: str, chat_key: str) -> str:
     return (
         f"👥 <b>Бот удалён из группы</b> · {_escape(title)}\n"
-        f"<i>Группа убрана из списка доступа.</i>"
+        f"<i>Список доступа сохранён и вернётся, когда бота добавят снова.</i>\n"
+        f"Удалить насовсем: <code>/delgroup {chat_key}</code>"
+    )
+
+
+def format_group_restored_notice(title: str) -> str:
+    return f"👥 <b>Бот снова в группе</b> · {_escape(title)}\n<i>Список доступа восстановлен.</i>"
+
+
+def format_group_renamed_notice(title: str) -> str:
+    return f"✏️ <b>Группа переименована</b> · {_escape(title)}"
+
+
+def format_missing_rights_notice(title: str) -> str:
+    return (
+        f"⚠️ <b>Не хватает прав</b> · {_escape(title)}\n"
+        f"<i>Сделайте бота администратором с правом приглашать участников, "
+        f"иначе заявки не будут обрабатываться.</i>"
     )
 
 
@@ -168,6 +204,29 @@ def format_group_not_found(target: str) -> str:
     return f"Не нашёл группу: <b>{_escape(target)}</b>"
 
 
+def format_group_ambiguous(target: str, groups: Mapping[str, Group]) -> str:
+    key_lines = "\n".join(
+        f"<code>{chat_key}</code> · {_format_group_header(group)}"
+        for chat_key, group in groups.items()
+    )
+    return f"Несколько групп называются <b>{_escape(target)}</b>. Укажите chat_id:\n{key_lines}"
+
+
+def format_invalid_usernames(usernames: list[str]) -> str:
+    return (
+        f"⚠️ <b>Некорректные ники:</b> {_escape(', '.join(usernames))}\n"
+        f"<i>Ник Telegram: латиница, цифры и подчёркивание, первый символ буква.</i>"
+    )
+
+
+def format_internal_error_notice(error_name: str) -> str:
+    return (
+        f"⚠️ <b>Сбой в работе бота</b>\n"
+        f"<code>{_escape(error_name)}</code>\n"
+        f"<i>Подробности в логе.</i>"
+    )
+
+
 def format_add_report(project: str, change: MemberChange) -> str:
     lines = [f"<b>{_escape(project)}</b>"]
     if change.applied:
@@ -192,7 +251,7 @@ def format_access_list_messages(whitelist: Whitelist) -> list[str]:
     lines = ["📋 <b>Списки доступа</b>"]
     for group in whitelist.groups.values():
         member_lines = [_format_member_line(m) for m in group.members] or ["<i>пусто</i>"]
-        lines += ["", f"<b>{_escape(group.project)}</b>", *member_lines]
+        lines += ["", _format_group_header(group), *member_lines]
     return _split_into_messages(lines)
 
 
@@ -213,6 +272,11 @@ def _split_into_messages(lines: list[str]) -> list[str]:
 
 def _count_utf16_units(text: str) -> int:
     return len(text.encode("utf-16-le")) // _UTF16_UNIT_BYTES
+
+
+def _format_group_header(group: Group) -> str:
+    header = f"<b>{_escape(group.project)}</b>"
+    return header if group.is_active else f"{header} <i>(бот не в группе)</i>"
 
 
 def _format_request_notice(heading: str, project: str, person: Person) -> str:

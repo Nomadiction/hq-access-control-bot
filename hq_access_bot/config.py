@@ -1,7 +1,7 @@
 """Process settings: reading .env and the environment, data file locations."""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from aiogram.utils.token import TokenValidationError, validate_token
@@ -19,7 +19,7 @@ class ConfigurationError(FatalBotError):
 
 @dataclass(frozen=True, slots=True)
 class Settings:
-    bot_token: str
+    bot_token: str = field(repr=False)
     admin_ids: frozenset[int]
     support_username: str
 
@@ -58,13 +58,20 @@ def _read_dotenv(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
     values = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
+    for raw_line in _read_text(path).splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
         values[key.strip()] = value.strip().strip('"').strip("'")
     return values
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as error:
+        raise ConfigurationError(f"{path} must be saved as UTF-8.") from error
 
 
 def _require(values: dict[str, str], key: str) -> str:

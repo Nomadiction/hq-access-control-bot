@@ -1,7 +1,19 @@
 import pytest
 from aiogram.methods import ApproveChatJoinRequest, DeclineChatJoinRequest, SendMessage
 
-from tests.support import ADMIN_ID, ALICE_RECORD, GROUP_KEY, join_request, make_user, supergroup
+from tests.support import (
+    ADMIN_ID,
+    ALICE_RECORD,
+    GROUP_KEY,
+    bad_request,
+    decode_error,
+    join_request,
+    make_user,
+    network_failure,
+    retry_after,
+    server_error,
+    supergroup,
+)
 
 
 @pytest.fixture
@@ -127,13 +139,71 @@ async def test_undeliverable_dm_does_not_stop_processing(alpha):
     assert [call.chat_id for call in alpha.calls_of(SendMessage)] == [99, ADMIN_ID]
 
 
-async def test_failed_approval_is_not_audited(alpha):
+@pytest.mark.parametrize(
+    ("user_id", "decision"),
+    [(10, ApproveChatJoinRequest), (99, DeclineChatJoinRequest)],
+)
+async def test_person_is_told_before_the_decision_through_the_request_chat(
+    alpha, user_id, decision
+):
+    await alpha.feed(
+        join_request(make_user(user_id, "alice" if user_id == 10 else "bob"), user_chat_id=5000)
+    )
+
+    kinds = [type(call) for call in alpha.session.calls]
+    assert kinds.index(SendMessage) < kinds.index(decision)
+    assert alpha.calls_of(SendMessage)[0].chat_id == 5000
+
+
+@pytest.mark.parametrize(
+    ("user_id", "username", "decision", "audit_event"),
+    [
+        (10, "alice", ApproveChatJoinRequest, "APPROVED id=10 @alice project=Alpha"),
+        (99, "bob", DeclineChatJoinRequest, "DECLINED id=99 @bob project=Alpha"),
+    ],
+)
+@pytest.mark.parametrize(
+    "failure", [retry_after(0), network_failure(), server_error(), decode_error()]
+)
+async def test_transient_failure_of_the_decision_is_retried(
+    alpha, user_id, username, decision, audit_event, failure
+):
+    alpha.session.script_errors(decision, failure, failure)
+
+    await alpha.feed(join_request(make_user(user_id, username)))
+
+    assert len(alpha.calls_of(decision)) == 3
+    assert alpha.audit_events() == [audit_event]
+
+
+async def test_rejected_decision_alerts_admins_and_tells_the_person(alpha):
     alpha.session.failing_methods.add(ApproveChatJoinRequest)
+
+    await alpha.feed(join_request(make_user(10, "alice", "Alice")))
+
+    assert len(alpha.calls_of(ApproveChatJoinRequest)) == 1
+    assert alpha.audit_events() == ["REQUEST-FAILED id=10 @alice project=Alpha"]
+    assert "Заявка не обработана" in alpha.admin_notices()[0]
+    assert "не удалось обработать" in alpha.texts_sent_to(10)[-1]
+
+
+async def test_retries_stop_after_the_attempt_limit(alpha):
+    failures = [network_failure() for _ in range(9)]
+    alpha.session.script_errors(ApproveChatJoinRequest, *failures)
 
     await alpha.feed(join_request(make_user(10, "alice")))
 
-    assert alpha.audit_events() == []
-    assert alpha.admin_notices() == []
+    assert len(alpha.calls_of(ApproveChatJoinRequest)) == 5
+    assert "Заявка не обработана" in alpha.admin_notices()[0]
+
+
+async def test_long_rate_limit_is_not_waited_out(alpha):
+    alpha.session.script_errors(ApproveChatJoinRequest, retry_after(3600))
+
+    await alpha.feed(join_request(make_user(10, "alice")))
+
+    assert len(alpha.calls_of(ApproveChatJoinRequest)) == 1
+    assert "Заявка не обработана" in alpha.admin_notices()[0]
 
 
 async def test_corrupted_whitelist_grants_nothing(harness):
@@ -143,3 +213,51 @@ async def test_corrupted_whitelist_grants_nothing(harness):
 
     assert harness.calls_of(ApproveChatJoinRequest) == []
     assert harness.paths.whitelist.read_text(encoding="utf-8") == "{ broken"
+
+
+async def test_missing_whitelist_makes_no_decision(alpha):
+    alpha.paths.whitelist.unlink()
+
+    await alpha.feed(join_request(make_user(99, "bob")))
+
+    assert alpha.calls_of(ApproveChatJoinRequest) == []
+    assert alpha.calls_of(DeclineChatJoinRequest) == []
+
+
+async def test_failed_message_to_the_person_does_not_block_the_decision(alpha):
+    alpha.session.script_errors(SendMessage, decode_error())
+
+    await alpha.feed(join_request(make_user(10, "alice")))
+
+    assert_approved(alpha, 10)
+
+
+async def test_undecodable_answers_end_in_an_alert(alpha):
+    alpha.session.script_errors(ApproveChatJoinRequest, *[decode_error() for _ in range(9)])
+
+    await alpha.feed(join_request(make_user(10, "alice")))
+
+    assert "Заявка не обработана" in alpha.admin_notices()[0]
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["Bad Request: HIDE_REQUESTER_MISSING", "Bad Request: USER_ALREADY_PARTICIPANT"],
+)
+async def test_already_resolved_request_raises_no_alarm(alpha, message):
+    alpha.session.script_errors(ApproveChatJoinRequest, bad_request(message))
+
+    await alpha.feed(join_request(make_user(10, "alice")))
+
+    assert alpha.admin_notices() == []
+    assert alpha.audit_events() == []
+
+
+async def test_unreadable_list_names_the_waiting_person_to_admins(harness):
+    harness.paths.whitelist.write_text("{ broken", encoding="utf-8")
+
+    await harness.feed(join_request(make_user(99, "bob", "Bob")))
+
+    assert "Заявка не обработана" in harness.admin_notices()[0]
+    assert "Bob · @bob" in harness.admin_notices()[0]
+    assert harness.audit_events() == ["REQUEST-FAILED id=99 @bob project=проект"]

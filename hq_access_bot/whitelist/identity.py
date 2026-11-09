@@ -39,3 +39,4 @@ class ObservedMember:
 
     person: Person
     is_in_group: bool
+    was_joined: bool

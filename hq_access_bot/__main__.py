@@ -7,3 +7,5 @@ try:
     run()
 except FatalBotError as error:
     raise SystemExit(str(error)) from error
+except KeyboardInterrupt:
+    raise SystemExit(0) from None

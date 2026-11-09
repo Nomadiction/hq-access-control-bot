@@ -1,6 +1,9 @@
+import asyncio
+
 from aiogram.methods import DeleteMessage, DeleteMessages, SendMessage
 
-from tests.support import ADMIN_ID, STRANGER, command, make_user, supergroup
+from hq_access_bot.handlers import public_commands
+from tests.support import ADMIN_ID, STRANGER, command, make_user, retry_after, supergroup
 
 
 async def test_admin_sees_admin_help(harness):
@@ -68,3 +71,58 @@ async def test_clear_is_ignored_in_groups(harness):
 
     assert harness.calls_of(DeleteMessages) == []
     assert harness.calls_of(SendMessage) == []
+
+
+async def test_clear_covers_a_bounded_part_of_the_history(harness):
+    await harness.feed(command("/clear", STRANGER, message_id=5000))
+
+    batches = [call.message_ids for call in harness.calls_of(DeleteMessages)]
+    assert len(batches) == 10
+    assert batches[0][0] == 5000
+    assert batches[-1][-1] == 4001
+
+
+async def test_concurrent_clear_in_the_same_chat_is_ignored(harness):
+    update = command("/clear", STRANGER, message_id=150)
+
+    await asyncio.gather(harness.feed(update), harness.feed(update))
+
+    assert len(harness.calls_of(DeleteMessages)) == 2
+
+
+async def test_clear_can_run_again_once_finished(harness):
+    update = command("/clear", STRANGER, message_id=50)
+
+    await harness.feed(update)
+    await harness.feed(update)
+
+    assert len(harness.calls_of(DeleteMessages)) == 2
+
+
+async def test_clear_stops_when_telegram_reports_overload(harness):
+    harness.session.script_errors(DeleteMessages, retry_after(1))
+
+    await harness.feed(command("/clear", STRANGER, message_id=250))
+
+    assert len(harness.calls_of(DeleteMessages)) == 1
+    assert harness.calls_of(DeleteMessage) == []
+    assert len(harness.texts_sent_to(99)) == 1
+
+
+async def test_clear_stops_when_single_deletes_hit_overload(harness):
+    harness.session.failing_methods.add(DeleteMessages)
+    harness.session.script_errors(DeleteMessage, retry_after(1))
+
+    await harness.feed(command("/clear", STRANGER, message_id=5))
+
+    assert len(harness.calls_of(DeleteMessage)) == 1
+
+
+async def test_cleanups_across_chats_are_capped(harness, monkeypatch):
+    monkeypatch.setattr(public_commands, "_MAX_CONCURRENT_CLEANUPS", 1)
+    first = command("/clear", make_user(201), message_id=150)
+    second = command("/clear", make_user(202), message_id=150)
+
+    await asyncio.gather(harness.feed(first), harness.feed(second))
+
+    assert {call.chat_id for call in harness.calls_of(DeleteMessages)} == {201}

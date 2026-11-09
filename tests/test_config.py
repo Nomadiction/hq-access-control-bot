@@ -76,3 +76,22 @@ def test_data_paths_live_inside_given_directory(tmp_path):
     assert {paths.whitelist.parent, paths.audit_log.parent, paths.instance_lock.parent} == {
         tmp_path
     }
+
+
+def test_byte_order_mark_does_not_hide_the_first_key(tmp_path):
+    path = tmp_path / ".env"
+    path.write_bytes(b"\xef\xbb\xbfBOT_TOKEN=1:abc\nSUPPORT_USERNAME=help\n")
+
+    assert load_settings(path).bot_token == "1:abc"
+
+
+def test_wrong_encoding_is_reported_as_configuration_error(tmp_path):
+    path = tmp_path / ".env"
+    path.write_bytes("# комментарий\nBOT_TOKEN=1:abc\n".encode("cp1251"))
+
+    with pytest.raises(ConfigurationError, match="UTF-8"):
+        load_settings(path)
+
+
+def test_token_stays_out_of_the_text_form_of_settings(env_file):
+    assert "1:file" not in repr(load_settings(env_file))

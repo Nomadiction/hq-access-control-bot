@@ -75,7 +75,7 @@ Available to everyone:
 | `/start`, `/help` | Show help.                           |
 | `/me`             | Show your numeric ID.                |
 | `/id`             | Show the `chat_id` of the current chat. |
-| `/clear`          | Clear your chat history with the bot. |
+| `/clear`          | Clear up to 1000 recent messages in your chat with the bot. |
 
 Admins only, in a private chat with the bot:
 
@@ -112,7 +112,8 @@ The file is `data/whitelist.json`, keyed by the group's `chat_id`:
 | `in`       | `true` if the person has already been in the group.      |
 | `name`     | Display name, helps identify people without a username.  |
 
-Every member needs at least an `id` or a `username`.
+Every member needs at least an `id` or a `username`. A group with `"inactive": true` keeps its
+list while the bot is not in that group.
 
 What the bot maintains by itself:
 
@@ -121,10 +122,19 @@ What the bot maintains by itself:
 - Once a record has an ID, only the ID counts: someone who takes over a freed username gets
   no access.
 - People who leave or are removed are taken off the list.
+- If the bot is removed from a group, the list is kept and comes back when the bot returns.
+  `/delgroup` deletes it for good.
+- A new group title becomes the project name.
+- Admins are warned when someone outside the list enters a group, for example through a plain
+  invite link.
 
 The file is re-read for every request, so manual edits apply without a restart. If the file
-is corrupted, the bot refuses to start, and while running it neither approves requests nor
-overwrites the file.
+is missing or corrupted, the bot refuses to start, and while running it neither decides on
+requests nor overwrites the file, and alerts admins instead. The file is created empty only on
+the very first start, recognised by the absence of `data/access.log`.
+
+When two groups share a name, commands ask for the `chat_id`. Usernames in `/add` and
+`/remove` may be separated by spaces or commas.
 
 ## Data and logs
 
@@ -145,12 +155,15 @@ at startup. Older requests have to be filed again.
 |----------------------------------------|-----------------------------------------------------|
 | `TelegramConflictError` / 409          | A second copy is running with the same token.       |
 | `BOT_TOKEN is empty`                   | `.env` is missing or does not set the value.        |
-| `whitelist.json is corrupted`          | The list file has an error, fix it by hand.         |
-| Requests are not processed             | The bot has no admin rights in the group.           |
+| `whitelist.json is missing or corrupted` | Fix the file by hand or restore it from a backup. |
+| Requests are not processed             | The bot needs admin rights with Invite Users.       |
 | Declined although the person is listed | Check `/reload`. Adding by numeric ID is more reliable. |
 
-Telegram does not let a bot message someone first, so direct messages reach only those who
-have pressed Start. This does not affect request processing.
+A person who files a join request is told the decision by direct message even without
+pressing Start, because Telegram allows that for 5 minutes while the request is open. Requests
+older than that, for example after downtime, are still decided, but without the message. A
+decision Telegram rejects or that fails repeatedly is reported to admins, who then handle the
+request by hand.
 
 If the token leaks, revoke it with `/revoke` at @BotFather and update `.env`.
 
@@ -164,6 +177,7 @@ hq_access_bot/
 ├── texts.py          all bot messages
 ├── audit_log.py      access audit
 ├── notifier.py       direct message delivery
+├── telegram_retry.py retries for Telegram calls that must not be lost
 ├── services.py       handler dependencies
 ├── bot_profile.py    bot description and menus
 ├── instance_lock.py  guard against a second instance

@@ -1,12 +1,23 @@
-from unittest.mock import AsyncMock
+import runpy
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from aiogram import Bot, Dispatcher
-from aiogram.methods import DeleteWebhook, SendMessage, SetMyCommands, SetMyDescription
+from aiogram.methods import DeleteWebhook, GetMe, SendMessage, SetMyCommands, SetMyDescription
 
 from hq_access_bot import app, instance_lock
+from hq_access_bot.config import ConfigurationError, DataPaths
+from hq_access_bot.errors import FatalBotError
 from hq_access_bot.whitelist.store import WhitelistCorruptedError
-from tests.support import ADMIN_ID, command
+from tests.support import (
+    ADMIN_ID,
+    command,
+    decode_error,
+    network_failure,
+    retry_after,
+    server_error,
+    unauthorized,
+)
 
 
 @pytest.fixture
@@ -103,3 +114,72 @@ def test_lock_is_released_when_the_instance_stops(tmp_path):
 
     with instance_lock.hold_instance_lock(lock_path):
         pass
+
+
+@pytest.mark.parametrize(
+    "failure", [network_failure(), server_error(), decode_error(), retry_after(0)]
+)
+async def test_startup_waits_for_telegram(harness, settings, offline_serve, monkeypatch, failure):
+    monkeypatch.setattr(app, "_STARTUP_RETRY_PAUSE_SECONDS", 0)
+    harness.session.script_errors(DeleteWebhook, failure, failure)
+
+    await app.serve(settings, harness.paths)
+
+    assert len(harness.calls_of(DeleteWebhook)) == 3
+    offline_serve.assert_awaited_once()
+
+
+async def test_startup_also_waits_for_the_bot_identity(
+    harness, settings, offline_serve, monkeypatch
+):
+    monkeypatch.setattr(app, "_STARTUP_RETRY_PAUSE_SECONDS", 0)
+    harness.session.script_errors(GetMe, network_failure())
+
+    await app.serve(settings, harness.paths)
+
+    assert len(harness.calls_of(DeleteWebhook)) == 2
+    offline_serve.assert_awaited_once()
+
+
+async def test_rejected_token_stops_startup_with_a_clear_error(harness, settings, offline_serve):
+    harness.session.script_errors(DeleteWebhook, unauthorized())
+
+    with pytest.raises(ConfigurationError, match="BOT_TOKEN"):
+        await app.serve(settings, harness.paths)
+
+    offline_serve.assert_not_awaited()
+
+
+async def test_first_start_creates_the_list_file(tmp_path, settings, offline_serve):
+    data_dir = tmp_path / "fresh"
+    data_dir.mkdir()
+    paths = DataPaths.inside(data_dir)
+
+    await app.serve(settings, paths)
+
+    assert paths.whitelist.read_text(encoding="utf-8").strip() == "{}"
+
+
+async def test_list_lost_after_the_first_start_is_refused(harness, settings, offline_serve):
+    harness.paths.whitelist.unlink()
+
+    with pytest.raises(WhitelistCorruptedError):
+        await app.serve(settings, harness.paths)
+
+    assert harness.session.calls == []
+    assert not harness.paths.whitelist.exists()
+
+
+def run_entry_point(monkeypatch, error):
+    monkeypatch.setattr(app, "run", Mock(side_effect=error))
+    with pytest.raises(SystemExit) as stopped:
+        runpy.run_module("hq_access_bot", run_name="__main__")
+    return stopped.value.code
+
+
+def test_ctrl_c_exits_without_a_traceback(monkeypatch):
+    assert run_entry_point(monkeypatch, KeyboardInterrupt()) == 0
+
+
+def test_fatal_error_exits_with_its_message(monkeypatch):
+    assert run_entry_point(monkeypatch, FatalBotError("broken setup")) == "broken setup"
